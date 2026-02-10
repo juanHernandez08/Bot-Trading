@@ -50,17 +50,12 @@ def preparar_datos(df):
         ], axis=1)
         df['ATR'] = ranges.max(axis=1).rolling(14).mean().bfill()
         
-        atr = df['ATR'].iloc[-1]
-        if pd.isna(atr): atr = df['Close'].iloc[-1] * 0.01
-        
-        df['Stop_Loss'] = df['Close'] - (atr * 1.5)
-        df['Take_Profit'] = df['Close'] + (atr * 3.0)
-        
+        # Objetivo (Target): 1 si sube, 0 si baja
         df['Target'] = (df['Close'].shift(-1) > df['Close']).astype(int)
         df['Volatilidad'] = df['Close'].rolling(20).std()
         df['SMA_50'] = df['Close'].rolling(50).mean()
         
-        return df.dropna(subset=['RSI', 'Close'])
+        return df.dropna(subset=['RSI', 'Close', 'ATR'])
     except: return pd.DataFrame()
 
 class Predictor:
@@ -83,51 +78,42 @@ class Predictor:
             return self.model.predict(data[cols].iloc[[-1]])[0], self.model.predict_proba(data[cols].iloc[[-1]])[0][1]
         except: return 0, 0.5
 
-# --- 3. DICCIONARIO INTELIGENTE ---
+# --- 3. DICCIONARIO & NORMALIZADOR ---
 SINONIMOS = {
     # EMPRESAS
-    "ROCKSTAR": "TTWO", "GTA": "TTWO", "TAKE TWO": "TTWO", "TTWO": "TTWO", "RSTAR": "TTWO",
+    "ROCKSTAR": "TTWO", "GTA": "TTWO", "TAKE TWO": "TTWO", "TTWO": "TTWO",
     "TESLA": "TSLA", "NVIDIA": "NVDA", "APPLE": "AAPL", "GOOGLE": "GOOGL", "META": "META",
     "AMAZON": "AMZN", "MICROSOFT": "MSFT", "NETFLIX": "NFLX", "NU": "NU", "MERCADO LIBRE": "MELI",
-    
-    # ESTRATEGIAS
+
+    # ESTRATEGIAS PAISES
     "CHINA": "YANG", "CONTRA CHINA": "YANG",
     "EEUU": "SQQQ", "CONTRA EEUU": "SQQQ", "USA": "SQQQ",
     "EUROPA": "EPV", "CONTRA EUROPA": "EPV",
-    
-    # LATAM
+
+    # FOREX / LATAM
     "COLOMBIA": "GXG", "CONTRA COLOMBIA": "COP=X",
     "MEXICO": "EWW", "CONTRA MEXICO": "MXN=X",
     "BRASIL": "EWZ", "CONTRA BRASIL": "BZQ",
-    "ARGENTINA": "ARGT", "CONTRA ARGENTINA": "USDARS=X",
     "CHILE": "ECH", "CONTRA CHILE": "USDCLP=X",
-    
+    "PERU": "EPU", "CONTRA PERU": "USDPEN=X",
+    "ARGENTINA": "ARGT", "CONTRA ARGENTINA": "USDARS=X",
+
     # ACTIVOS COMUNES
     "DOLAR": "COP=X", "USD": "COP=X", "PESO": "COP=X",
     "EURO": "EURUSD=X", "EUR": "EURUSD=X",
     "BITCOIN": "BTC-USD", "BTC": "BTC-USD",
-    "ETH": "ETH-USD", "ETHEREUM": "ETH-USD",
-    "ORO": "GLD", "GOLD": "GLD", "PETROLEO": "USO"
+    "ETH": "ETH-USD", "ORO": "GLD", "PETROLEO": "USO"
 }
 
 def normalizar_ticker(ticker):
-    """
-    Lógica mejorada:
-    1. Revisa DICCIONARIO EXACTO.
-    2. Revisa si es un PAR DE FOREX (6 letras).
-    3. Devuelve limpio.
-    """
     if not ticker: return None
-    t = ticker.upper().strip().replace(" ", "")
+    t = ticker.upper().strip().replace(" ", "").replace("/", "").replace("-", "")
     
-    # 1. Búsqueda en Diccionario (Prioridad Máxima)
-    # Buscamos si alguna clave del diccionario está contenida en el input
     for clave, valor in SINONIMOS.items():
-        if clave == t: return valor # Coincidencia exacta
-        if clave in t and len(clave) > 3: return valor # Coincidencia parcial segura
-        
-    # 2. Detección automática de Forex (ej: AUDCAD -> AUDCAD=X)
-    # Si tiene 6 letras y no termina en =X, asumimos que es par de divisas
+        if clave == t: return valor
+        if clave in t and len(clave) > 4: return valor
+
+    # Detector Automático de Forex (6 letras)
     if len(t) == 6 and t.isalpha() and "=X" not in t:
         return f"{t}=X"
         
@@ -135,16 +121,18 @@ def normalizar_ticker(ticker):
 
 # --- 4. ESCÁNER ---
 async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
-    # LISTAS DEFINIDAS
-    FOREX_LIST = ['EURUSD=X', 'GBPUSD=X', 'JPY=X', 'COP=X', 'MXN=X', 'AUDCAD=X', 'USDCLP=X']
-    CRIPTO_LIST = ['BTC-USD', 'ETH-USD', 'SOL-USD', 'BNB-USD', 'XRP-USD', 'DOGE-USD']
-    ACCIONES_LIST = ['AAPL', 'TSLA', 'NVDA', 'AMZN', 'MSFT', 'GLD', 'TTWO', 'NU', 'MELI']
+    FOREX_LIST = [
+        'EURUSD=X', 'GBPUSD=X', 'JPY=X', 'COP=X', 'MXN=X', 
+        'AUDUSD=X', 'USDCAD=X', 'NZDUSD=X', 'USDCHF=X', 
+        'EURGBP=X', 'GBPJPY=X', 'EURJPY=X', 'AUDCAD=X'
+    ]
+    CRIPTO_LIST = ['BTC-USD', 'ETH-USD', 'SOL-USD', 'BNB-USD', 'XRP-USD', 'DOGE-USD', 'ADA-USD']
+    ACCIONES_LIST = ['AAPL', 'TSLA', 'NVDA', 'AMZN', 'MSFT', 'GLD', 'TTWO', 'NU', 'MELI', 'GOOGL']
     
-    # SELECCIÓN
     if categoria == "FOREX": lista = FOREX_LIST
     elif categoria == "CRIPTO": lista = CRIPTO_LIST
     elif categoria == "ACCIONES": lista = ACCIONES_LIST
-    else: lista = ['AAPL', 'BTC-USD', 'EURUSD=X', 'GLD', 'NVDA'] # GENERAL (Mix)
+    else: lista = ['AAPL', 'BTC-USD', 'EURUSD=X', 'GLD', 'NVDA', 'COP=X'] 
 
     inter, per = ("15m", "5d") if estilo == "SCALPING" else ("1d", "6mo")
     try:
@@ -156,11 +144,12 @@ async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
                 p = df[t].dropna()
                 if len(p) > 5:
                     vol = abs((p.iloc[-1] - p.iloc[-4])/p.iloc[-4])
-                    if vol > 0.001: cands.append(t)
+                    if vol > 0.0005: 
+                        cands.append(t)
         return cands[:5]
     except: return lista[:3]
 
-# --- 5. INTELIGENCIA (PROMPT CORREGIDO) ---
+# --- 5. INTELIGENCIA (PROMPT) ---
 client = None
 if Config.GROQ_API_KEY:
     try: client = OpenAI(api_key=Config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
@@ -168,17 +157,13 @@ if Config.GROQ_API_KEY:
 
 def interpretar_intencion(msg):
     if not client: return {"accion": "CHARLA"}
-    
-    # Prompt explícito para diferenciar Categorías vs Tickers
     prompt = f"""
     Analiza: "{msg}".
-    
-    Instrucciones estrictas:
-    1. Si pide "divisas" o "monedas" -> categoria="FOREX", accion="RECOMENDAR".
-    2. Si pide "acciones" o "empresas" -> categoria="ACCIONES", accion="RECOMENDAR".
-    3. Si pide "cripto" -> categoria="CRIPTO", accion="RECOMENDAR".
-    4. Si dice "Analiza X" (ej: AUDCAD, Rockstar) -> accion="ANALIZAR", ticker="X". (NO USAR COMPARAR).
-    5. Si dice "Apostar contra pais" -> accion="COMPARAR", lista_activos=[TICKERS REALES].
+    1. Si es "divisas/forex" -> categoria="FOREX", accion="RECOMENDAR".
+    2. Si es "acciones" -> categoria="ACCIONES", accion="RECOMENDAR".
+    3. Si es "cripto" -> categoria="CRIPTO", accion="RECOMENDAR".
+    4. Si dice UN SOLO NOMBRE (ej: "AUDCAD", "Rockstar") -> accion="ANALIZAR", ticker="EL_NOMBRE".
+    5. Solo usa COMPARAR si pide explícitamente comparar o apostar contra pais.
     
     JSON Schema: {{
         "accion": "ANALIZAR"|"COMPARAR"|"RECOMENDAR"|"VIGILAR"|"CHARLA", 
@@ -192,27 +177,26 @@ def interpretar_intencion(msg):
     try:
         resp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user", "content":prompt}, {"role":"system", "content":"JSON only"}])
         data = json.loads(re.search(r"\{.*\}", resp.choices[0].message.content, re.DOTALL).group(0))
-        
-        # Normalizamos aquí
         if data.get("ticker"): data["ticker"] = normalizar_ticker(data["ticker"])
         if data.get("lista_activos"): data["lista_activos"] = [normalizar_ticker(t) for t in data["lista_activos"]]
-        
         return data
     except: return {"accion":"CHARLA", "categoria": "GENERAL"}
 
 def generar_resumen_humano(datos_txt, prob):
-    if not client: return "Revisa los datos."
-    accion = "COMPRAR" if prob > 0.6 else "VENDER" if prob < 0.4 else "ESPERAR"
+    if not client: return "Analiza el gráfico."
+    # Ajustamos el texto de la IA según la probabilidad
+    direccion = "COMPRAR (Subirá)" if prob > 0.55 else "VENDER (Bajará)" if prob < 0.45 else "ESPERAR"
+    
     try:
         resp = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role":"user", "content":f"Datos: {datos_txt}. Prob: {prob}. Explica en 15 palabras sencillas por qué {accion}."}],
+            messages=[{"role":"user", "content":f"Datos: {datos_txt}. Probabilidad: {prob}. Explica en 15 palabras sencillas por qué debo {direccion}."}],
             max_tokens=40
         )
         return resp.choices[0].message.content.replace('"', '')
-    except: return "Mercado incierto."
+    except: return "Mercado mixto."
 
-# --- 6. MOTOR ANALÍTICO ---
+# --- 6. MOTOR ANALÍTICO (CORREGIDO LONG/SHORT) ---
 async def motor_analisis(ticker, estilo="SCALPING"):
     await asyncio.sleep(0.5) 
     if not estilo: estilo = "SCALPING"
@@ -220,9 +204,7 @@ async def motor_analisis(ticker, estilo="SCALPING"):
     backup_mode = False
 
     try:
-        # Intento 1
         df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
-        # Intento 2 (Backup)
         if df is None or df.empty or len(df) < 5:
             inv, per = "1d", "1y"
             df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
@@ -233,6 +215,7 @@ async def motor_analisis(ticker, estilo="SCALPING"):
         clean = preparar_datos(df)
         if clean.empty: return None, 0.0, 0.0, None
         
+        # Predicción
         prob = 0.5
         if len(clean) > 15:
             brain = Predictor()
@@ -241,18 +224,42 @@ async def motor_analisis(ticker, estilo="SCALPING"):
         
         row = clean.iloc[-1]
         
-        if prob > 0.65: señal, icono, accion_txt = "ALCISTA", "🟢", "COMPRAR 🚀"
-        elif prob > 0.55: señal, icono, accion_txt = "MODERADA", "🟢", "COMPRA CAUTELOSA ✅"
-        elif prob < 0.40: señal, icono, accion_txt = "BAJISTA", "🔴", "NO COMPRAR / VENDER ❌"
-        else: señal, icono, accion_txt = "NEUTRAL", "⚪", "ESPERAR ✋"
+        # --- LÓGICA LONG vs SHORT ---
+        atr = row['ATR']
+        close = row['Close']
+        
+        if prob > 0.55:
+            # LONG (COMPRA)
+            señal = "ALCISTA"
+            icono = "🟢"
+            accion_txt = "COMPRAR (LONG) 🚀"
+            stop_loss = close - (atr * 1.5)
+            take_profit = close + (atr * 3.0)
+            
+        elif prob < 0.45:
+            # SHORT (VENTA)
+            señal = "BAJISTA"
+            icono = "🔴"
+            accion_txt = "VENDER (SHORT) 📉"
+            # EN SHORT: TP es menor que precio, SL es mayor que precio
+            stop_loss = close + (atr * 1.5)
+            take_profit = close - (atr * 3.0)
+            
+        else:
+            # NEUTRAL
+            señal = "NEUTRAL"
+            icono = "⚪"
+            accion_txt = "ESPERAR ✋"
+            stop_loss = close - (atr * 1.5) # Referencial
+            take_profit = close + (atr * 3.0)
 
         fmt = ",.4f" if row['Close'] < 50 else ",.2f"
-        if "COP" in ticker or "CLP" in ticker or "ARS" in ticker: fmt = ",.0f"
+        if "COP" in ticker or "CLP" in ticker or "ARS" in ticker or "JPY" in ticker: fmt = ",.0f"
 
         info = {
-            "precio": format(row['Close'], fmt),
-            "sl": format(row['Stop_Loss'], fmt),
-            "tp": format(row['Take_Profit'], fmt),
+            "precio": format(close, fmt),
+            "sl": format(stop_loss, fmt),
+            "tp": format(take_profit, fmt),
             "rsi": f"{row['RSI']:.1f}",
             "señal": señal,
             "icono": icono,
@@ -289,12 +296,11 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
     except: acc, est, cat, explicacion = "CHARLA", "SCALPING", "GENERAL", None
     
-    # CASO COMPARAR / ESTRATEGIA
+    # 1. ESTRATEGIA
     if acc == "COMPARAR" and lst:
         titulo = "📊 **Estrategia**" if explicacion else "⚖️ **Comparando**"
-        msg = await update.message.reply_text(f"{titulo}...")
+        msg = await update.message.reply_text(f"{titulo} ({est})...")
         reporte = f"{titulo}\n" + (f"💡 _{explicacion}_\n" if explicacion else "") + "━━━━━━━━━━━━━━━━━━\n"
-        
         found = False
         for t in lst:
             info, prob, _, _ = await motor_analisis(t, est)
@@ -305,23 +311,22 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if found: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
         else: await update.message.reply_text("❌ Sin datos.")
 
-    # CASO RECOMENDAR (ESCÁNER POR CATEGORÍA REAL)
+    # 2. RECOMENDACIÓN
     elif acc == "RECOMENDAR":
-        msg = await update.message.reply_text(f"🔎 Buscando en **{cat}**...")
-        # Aquí pasamos la categoría correcta al escáner
-        cands = await escanear_mercado_real(cat, est) 
+        msg = await update.message.reply_text(f"🔎 Analizando **{cat}**...")
+        cands = await escanear_mercado_real(cat, est)
         reporte = f"⚡ **MEJORES {cat}**\n━━━━━━━━━━━━━━━━━━\n"
         found = False
         for t in cands:
             info, prob, _, _ = await motor_analisis(t, est)
-            if prob > 0.5:
+            if prob > 0.4: 
                 found = True
-                reporte += f"🔥 **{info['ticker']}**\n💰 ${info['precio']} | {info['veredicto']}\n🎯 TP: ${info['tp']}\n〰〰〰〰〰〰〰〰〰\n"
+                reporte += f"🔥 **{info['ticker']}**\n💰 ${info['precio']} | {info['veredicto']} ({prob*100:.0f}%)\n🎯 TP: ${info['tp']}\n〰〰〰〰〰〰〰〰〰\n"
         await msg.delete()
         if found: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
-        else: await update.message.reply_text(f"💤 Sin oportunidades en {cat}.")
+        else: await update.message.reply_text(f"💤 Mercado muy lento en {cat}.")
 
-    # CASO ANALIZAR UNO SOLO
+    # 3. ANÁLISIS INDIVIDUAL
     elif acc == "ANALIZAR" and tick:
         msg = await update.message.reply_text(f"🔎 Analizando {tick}...")
         info, prob, _, _ = await motor_analisis(tick, est)
@@ -371,5 +376,5 @@ if __name__ == '__main__':
     app = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), manejar_mensaje_ia))
     if app.job_queue: app.job_queue.run_repeating(guardian_cartera, interval=900, first=30)
-    print("🤖 BOT FINAL ACTIVO")
+    print("🤖 BOT SHORT/LONG ACTIVO")
     app.run_polling()
