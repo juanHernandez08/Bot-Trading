@@ -55,19 +55,17 @@ def preparar_datos(df):
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
     
-    # Calculamos ATR de forma segura
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
     df['ATR'] = ranges.max(axis=1).rolling(14).mean().bfill()
     
     atr = df['ATR'].iloc[-1]
-    # Fallback si ATR es nulo
     if pd.isna(atr):
         atr = df['Close'].iloc[-1] * 0.01
     
     df['Stop_Loss'] = df['Close'] - (atr * 1.5)
     df['Take_Profit'] = df['Close'] + (atr * 3.0)
     
-    # Target para ML
+    # Target
     df['Target'] = (df['Close'].shift(-1) > df['Close']).astype(int)
     
     # Volatilidad y Medias
@@ -91,9 +89,7 @@ class Predictor:
             return
         
         features = ['RSI', 'MACD', 'Signal', 'SMA_50', 'SMA_200', 'Volatilidad']
-        # Solo usar columnas que existan
         cols_reales = [f for f in features if f in data.columns]
-        
         X = data[cols_reales]
         y = data['Target']
         
@@ -106,15 +102,11 @@ class Predictor:
     def predecir_mañana(self, data):
         if not self.entrenado:
             return 0, 0.5
-        
         try:
             features = ['RSI', 'MACD', 'Signal', 'SMA_50', 'SMA_200', 'Volatilidad']
             cols_reales = [f for f in features if f in data.columns]
             ultimo = data[cols_reales].iloc[[-1]]
-            
-            prediccion = self.model.predict(ultimo)[0]
-            probabilidad = self.model.predict_proba(ultimo)[0][1]
-            return prediccion, probabilidad
+            return self.model.predict(ultimo)[0], self.model.predict_proba(ultimo)[0][1]
         except:
             return 0, 0.5
 
@@ -131,8 +123,7 @@ async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
     else:
         lista = UNIVERSO.get(categoria, [])
     
-    if not lista:
-        return []
+    if not lista: return []
     
     if estilo == "SCALPING":
         intervalo, periodo = "15m", "5d"
@@ -141,8 +132,7 @@ async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
     
     try:
         datos = yf.download(lista, period=periodo, interval=intervalo, progress=False, auto_adjust=True)['Close']
-        if isinstance(datos, pd.Series):
-            datos = datos.to_frame()
+        if isinstance(datos, pd.Series): datos = datos.to_frame()
         
         candidatos = []
         for t in lista:
@@ -150,26 +140,27 @@ async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
                 precios = datos[t].dropna()
                 if len(precios) > 5:
                     vol = abs((precios.iloc[-1] - precios.iloc[-4]) / precios.iloc[-4])
-                    if vol > 0.002:
-                        candidatos.append(t)
-        
+                    if vol > 0.002: candidatos.append(t)
         return candidatos[:5]
     except:
-        return lista[:3] # Fallback simple si falla la descarga masiva
+        return lista[:3]
 
 # --- 4. LA MENTE (LLM / GROQ) ---
 client = None
 if Config.GROQ_API_KEY:
     try:
         client = OpenAI(api_key=Config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
-    except:
-        pass
+    except: pass
 
 def interpretar_intencion(msg):
-    if not client:
-        return {"accion": "CHARLA", "ticker": None}
+    if not client: return {"accion": "CHARLA", "ticker": None}
     
-    prompt = f"""Analiza: "{msg}". Responde JSON: {{"accion": "ANALIZAR"|"COMPARAR"|"RECOMENDAR"|"VIGILAR"|"CHARLA", "ticker": "SIMBOLO"|null, "lista_activos": ["A", "B"]|null, "estilo": "SCALPING"|"SWING"}}."""
+    # --- PROMPT CORREGIDO: DEFAULT SCALPING ---
+    prompt = f"""
+    Analiza: "{msg}".
+    Regla: Si el usuario NO especifica temporalidad (como 'Swing', 'Diario', 'Largo plazo'), asume SIEMPRE "SCALPING".
+    Responde JSON: {{"accion": "ANALIZAR"|"COMPARAR"|"RECOMENDAR"|"VIGILAR"|"CHARLA", "ticker": "SIMBOLO"|null, "lista_activos": ["A", "B"]|null, "estilo": "SCALPING"|"SWING"}}
+    """
     
     try:
         resp = client.chat.completions.create(
@@ -178,15 +169,13 @@ def interpretar_intencion(msg):
         )
         txt = resp.choices[0].message.content
         match = re.search(r"\{.*\}", txt, re.DOTALL)
-        if match:
-            return json.loads(match.group(0))
+        if match: return json.loads(match.group(0))
         return {"accion":"CHARLA"}
     except:
         return {"accion":"CHARLA"}
 
 def generar_respuesta_natural(datos, msg):
-    if not client:
-        return str(datos)
+    if not client: return str(datos)
     try:
         return client.chat.completions.create(
             model="llama-3.3-70b-versatile", 
@@ -195,12 +184,10 @@ def generar_respuesta_natural(datos, msg):
                 {"role":"user", "content":f"Datos: {datos}. Usuario: {msg}. Responde análisis."}
             ]
         ).choices[0].message.content
-    except:
-        return str(datos)
+    except: return str(datos)
 
 def generar_recomendacion_mercado(reporte, estilo):
-    if not client:
-        return reporte
+    if not client: return reporte
     try:
         return client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -209,8 +196,7 @@ def generar_recomendacion_mercado(reporte, estilo):
                 {"role":"user", "content":reporte}
             ]
         ).choices[0].message.content
-    except:
-        return reporte
+    except: return reporte
 
 # --- 5. EL CORE (Telegram Bot) ---
 ARCHIVO_CARTERA = 'cartera.json'
@@ -218,21 +204,20 @@ ARCHIVO_CARTERA = 'cartera.json'
 def cargar_cartera():
     try:
         if os.path.exists(ARCHIVO_CARTERA):
-            with open(ARCHIVO_CARTERA, 'r') as f:
-                return json.load(f)
+            with open(ARCHIVO_CARTERA, 'r') as f: return json.load(f)
         return []
-    except:
-        return []
+    except: return []
 
 def guardar_cartera(d):
     try:
-        with open(ARCHIVO_CARTERA, 'w') as f:
-            json.dump(d, f)
-    except:
-        pass
+        with open(ARCHIVO_CARTERA, 'w') as f: json.dump(d, f)
+    except: pass
 
 async def motor_analisis(ticker, estilo="SCALPING"):
     await asyncio.sleep(1)
+    # Refuerzo de seguridad: Si llega vacío, forzar Scalping
+    if not estilo: estilo = "SCALPING"
+
     if estilo == "SWING":
         inv, per, tipo = "1d", "1y", "Swing"
     else:
@@ -241,18 +226,15 @@ async def motor_analisis(ticker, estilo="SCALPING"):
     try:
         df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
         if df is None or df.empty:
-            if estilo == "SCALPING": # Backup
+            if estilo == "SCALPING":
                 inv, per, tipo = "1d", "1y", "Swing (Backup)"
                 df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
         
-        if df is None or df.empty:
-            return None, 0.0, 0.0
+        if df is None or df.empty: return None, 0.0, 0.0
         
         clean = preparar_datos(df)
-        if clean.empty:
-            return None, 0.0, 0.0
+        if clean.empty: return None, 0.0, 0.0
         
-        # ML
         train = clean.iloc[:-1]
         actual = clean.iloc[[-1]]
         prob = 0.5
@@ -279,53 +261,53 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
     texto = update.message.text
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
     
+    # --- DEFAULT FORZADO A SCALPING ---
+    acc = "CHARLA"
+    est = "SCALPING" 
+
     try:
         data = interpretar_intencion(texto)
         acc = data.get("accion", "CHARLA")
         tick = data.get("ticker")
         lst = data.get("lista_activos")
-        est = data.get("estilo", "SCALPING")
+        # Aquí forzamos el default si viene vacío
+        est = data.get("estilo") or "SCALPING"
+
         if acc == "ANALIZAR" and not tick and not lst:
             acc = "RECOMENDAR"
     except:
         acc = "CHARLA"
+        est = "SCALPING"
     
     if acc == "COMPARAR" and lst:
-        msg = await update.message.reply_text(f"⚖️ Comparando {len(lst)}...")
+        msg = await update.message.reply_text(f"⚖️ Comparando {len(lst)} ({est})...")
         rep = ""
         for t in lst:
             txt, prob, p = await motor_analisis(t, est)
-            if txt:
-                rep += f"- {t}: ${p:.2f} | {prob*100:.1f}%\n"
+            if txt: rep += f"- {t}: ${p:.2f} | {prob*100:.1f}%\n"
         await msg.delete()
-        if rep:
-            await update.message.reply_text(generar_recomendacion_mercado(rep, "COMP"))
-        else:
-            await update.message.reply_text("❌ Error.")
+        if rep: await update.message.reply_text(generar_recomendacion_mercado(rep, "COMP"))
+        else: await update.message.reply_text("❌ Error.")
 
     elif acc == "RECOMENDAR":
-        msg = await update.message.reply_text("🔎 Escaneando...")
+        msg = await update.message.reply_text(f"🔎 Escaneando ({est})...")
         cands = await escanear_mercado_real("GENERAL", est)
         rep = ""
         for t in cands:
             txt, prob, p = await motor_analisis(t, est)
-            if prob > 0.5:
-                rep += f"- {t}: ${p:.2f} | {prob*100:.1f}%\n"
+            if prob > 0.5: rep += f"- {t}: ${p:.2f} | {prob*100:.1f}%\n"
         await msg.delete()
-        if rep:
-            await update.message.reply_text(generar_recomendacion_mercado(rep, est))
-        else:
-            await update.message.reply_text("💤 Nada claro.")
+        if rep: await update.message.reply_text(generar_recomendacion_mercado(rep, est))
+        else: await update.message.reply_text("💤 Nada claro.")
 
     elif acc == "ANALIZAR" and tick:
-        msg = await update.message.reply_text(f"🔎 Analizando {tick}...")
+        msg = await update.message.reply_text(f"🔎 Analizando {tick} ({est})...")
         txt, prob, p = await motor_analisis(tick, est)
         if txt:
             final = generar_respuesta_natural(txt, texto)
             await msg.delete()
             await update.message.reply_text(final, parse_mode=ParseMode.MARKDOWN)
-        else:
-            await msg.edit_text("⚠️ Sin datos.")
+        else: await msg.edit_text("⚠️ Sin datos.")
 
     elif acc == "VIGILAR" and tick:
         _, _, p = await motor_analisis(tick, "SWING")
@@ -339,18 +321,14 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def guardian_cartera(context: ContextTypes.DEFAULT_TYPE):
     c = cargar_cartera()
-    if not c:
-        return
+    if not c: return
     for i in c:
         await asyncio.sleep(2)
         _, _, now = await motor_analisis(i['ticker'], "SCALPING")
         if now > 0 and Config.TELEGRAM_CHAT_ID:
             chg = (now - i['precio_compra']) / i['precio_compra']
             if abs(chg) > 0.03:
-                await context.bot.send_message(
-                    Config.TELEGRAM_CHAT_ID, 
-                    f"🚨 **{i['ticker']}**\nMov: {chg*100:.1f}%"
-                )
+                await context.bot.send_message(Config.TELEGRAM_CHAT_ID, f"🚨 **{i['ticker']}**\nMov: {chg*100:.1f}%")
 
 if __name__ == '__main__':
     if not Config.TELEGRAM_TOKEN:
