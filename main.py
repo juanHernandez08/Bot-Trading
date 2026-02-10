@@ -83,62 +83,69 @@ class Predictor:
             return self.model.predict(data[cols].iloc[[-1]])[0], self.model.predict_proba(data[cols].iloc[[-1]])[0][1]
         except: return 0, 0.5
 
-# --- 3. DICCIONARIO GLOBAL "EL ESTRATEGA" ---
+# --- 3. DICCIONARIO INTELIGENTE ---
 SINONIMOS = {
-    # --- EMPRESAS ---
-    "ROCKSTAR": "TTWO", "GTA": "TTWO", "TAKE TWO": "TTWO", "TTWO": "TTWO",
+    # EMPRESAS
+    "ROCKSTAR": "TTWO", "GTA": "TTWO", "TAKE TWO": "TTWO", "TTWO": "TTWO", "RSTAR": "TTWO",
     "TESLA": "TSLA", "NVIDIA": "NVDA", "APPLE": "AAPL", "GOOGLE": "GOOGL", "META": "META",
-    "AMAZON": "AMZN", "MICROSOFT": "MSFT", "NETFLIX": "NFLX", "MERCADO LIBRE": "MELI", "NU BANK": "NU",
-
-    # --- ESTRATEGIAS CONTRA POTENCIAS ---
+    "AMAZON": "AMZN", "MICROSOFT": "MSFT", "NETFLIX": "NFLX", "NU": "NU", "MERCADO LIBRE": "MELI",
+    
+    # ESTRATEGIAS
     "CHINA": "YANG", "CONTRA CHINA": "YANG",
     "EEUU": "SQQQ", "CONTRA EEUU": "SQQQ", "USA": "SQQQ",
-    "EUROPA": "EPV", "CONTRA EUROPA": "EPV", "ALEMANIA": "EPV",
-    "JAPON": "EWV", "CONTRA JAPON": "EWV",
-
-    # --- LATINOAMÉRICA & EMERGENTES (FOREX / DEFENSA) ---
-    # Lógica: Si apuestas contra el país, compras Dólares (La moneda local se devalúa)
+    "EUROPA": "EPV", "CONTRA EUROPA": "EPV",
+    
+    # LATAM
     "COLOMBIA": "GXG", "CONTRA COLOMBIA": "COP=X",
     "MEXICO": "EWW", "CONTRA MEXICO": "MXN=X",
+    "BRASIL": "EWZ", "CONTRA BRASIL": "BZQ",
+    "ARGENTINA": "ARGT", "CONTRA ARGENTINA": "USDARS=X",
     "CHILE": "ECH", "CONTRA CHILE": "USDCLP=X",
-    "PERU": "EPU", "CONTRA PERU": "USDPEN=X",
-    "BRASIL": "EWZ", "CONTRA BRASIL": "BZQ", # Brasil tiene ETF Inverso
-    "ARGENTINA": "ARGT", "CONTRA ARGENTINA": "USDARS=X", # Dólar oficial (referencia)
-    "COSTA RICA": "USDCRC=X", "CONTRA COSTA RICA": "USDCRC=X",
     
-    # --- ECONOMÍAS DOLARIZADAS O COMPLEJAS (REFUGIO) ---
-    # Si la economía de estos países falla, lo mejor es Oro o Bitcoin
-    "VENEZUELA": "BTC-USD", "CONTRA VENEZUELA": "BTC-USD",
-    "ECUADOR": "GLD", "CONTRA ECUADOR": "GLD",
-    "PANAMA": "GLD", "CONTRA PANAMA": "GLD",
-    "CUBA": "BTC-USD", "CONTRA CUBA": "BTC-USD",
-    "PUERTO RICO": "GLD", "CONTRA PUERTO RICO": "GLD",
-    "EL SALVADOR": "BTC-USD", "CONTRA EL SALVADOR": "GLD",
-
-    # --- ACTIVOS ---
+    # ACTIVOS COMUNES
     "DOLAR": "COP=X", "USD": "COP=X", "PESO": "COP=X",
     "EURO": "EURUSD=X", "EUR": "EURUSD=X",
     "BITCOIN": "BTC-USD", "BTC": "BTC-USD",
-    "ETH": "ETH-USD", "ORO": "GLD", "PLATA": "SLV", "PETROLEO": "USO"
+    "ETH": "ETH-USD", "ETHEREUM": "ETH-USD",
+    "ORO": "GLD", "GOLD": "GLD", "PETROLEO": "USO"
 }
 
 def normalizar_ticker(ticker):
+    """
+    Lógica mejorada:
+    1. Revisa DICCIONARIO EXACTO.
+    2. Revisa si es un PAR DE FOREX (6 letras).
+    3. Devuelve limpio.
+    """
     if not ticker: return None
-    t = ticker.upper().strip()
-    # Búsqueda difusa (si la palabra clave está dentro del mensaje)
+    t = ticker.upper().strip().replace(" ", "")
+    
+    # 1. Búsqueda en Diccionario (Prioridad Máxima)
+    # Buscamos si alguna clave del diccionario está contenida en el input
     for clave, valor in SINONIMOS.items():
-        if clave in t: return valor
-    return t.replace(" ", "")
+        if clave == t: return valor # Coincidencia exacta
+        if clave in t and len(clave) > 3: return valor # Coincidencia parcial segura
+        
+    # 2. Detección automática de Forex (ej: AUDCAD -> AUDCAD=X)
+    # Si tiene 6 letras y no termina en =X, asumimos que es par de divisas
+    if len(t) == 6 and t.isalpha() and "=X" not in t:
+        return f"{t}=X"
+        
+    return t
 
 # --- 4. ESCÁNER ---
 async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
-    UNIVERSO = {
-        "FOREX": ['EURUSD=X', 'GBPUSD=X', 'JPY=X', 'COP=X', 'MXN=X', 'USDCLP=X', 'USDPEN=X'],
-        "CRIPTO": ['BTC-USD', 'ETH-USD', 'SOL-USD', 'BNB-USD', 'XRP-USD'],
-        "ACCIONES": ['AAPL', 'TSLA', 'NVDA', 'AMZN', 'MSFT', 'GLD', 'TTWO', 'NU', 'MELI'],
-        "GENERAL": ['AAPL', 'BTC-USD', 'EURUSD=X', 'GLD', 'NVDA', 'COP=X']
-    }
-    lista = UNIVERSO.get(categoria, UNIVERSO["GENERAL"])
+    # LISTAS DEFINIDAS
+    FOREX_LIST = ['EURUSD=X', 'GBPUSD=X', 'JPY=X', 'COP=X', 'MXN=X', 'AUDCAD=X', 'USDCLP=X']
+    CRIPTO_LIST = ['BTC-USD', 'ETH-USD', 'SOL-USD', 'BNB-USD', 'XRP-USD', 'DOGE-USD']
+    ACCIONES_LIST = ['AAPL', 'TSLA', 'NVDA', 'AMZN', 'MSFT', 'GLD', 'TTWO', 'NU', 'MELI']
+    
+    # SELECCIÓN
+    if categoria == "FOREX": lista = FOREX_LIST
+    elif categoria == "CRIPTO": lista = CRIPTO_LIST
+    elif categoria == "ACCIONES": lista = ACCIONES_LIST
+    else: lista = ['AAPL', 'BTC-USD', 'EURUSD=X', 'GLD', 'NVDA'] # GENERAL (Mix)
+
     inter, per = ("15m", "5d") if estilo == "SCALPING" else ("1d", "6mo")
     try:
         df = yf.download(lista, period=per, interval=inter, progress=False, auto_adjust=True)['Close']
@@ -153,7 +160,7 @@ async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
         return cands[:5]
     except: return lista[:3]
 
-# --- 5. IA ---
+# --- 5. INTELIGENCIA (PROMPT CORREGIDO) ---
 client = None
 if Config.GROQ_API_KEY:
     try: client = OpenAI(api_key=Config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
@@ -161,11 +168,17 @@ if Config.GROQ_API_KEY:
 
 def interpretar_intencion(msg):
     if not client: return {"accion": "CHARLA"}
+    
+    # Prompt explícito para diferenciar Categorías vs Tickers
     prompt = f"""
     Analiza: "{msg}".
-    1. CATEGORIA: "FOREX", "ACCIONES", "CRIPTO", "GENERAL".
-    2. ESTRATEGIA: Si pide contra pais/crisis -> accion="COMPARAR", lista_activos=[TICKERS REALES DEL DICCIONARIO], explicacion="Frase corta del porqué".
-    3. JSON Only.
+    
+    Instrucciones estrictas:
+    1. Si pide "divisas" o "monedas" -> categoria="FOREX", accion="RECOMENDAR".
+    2. Si pide "acciones" o "empresas" -> categoria="ACCIONES", accion="RECOMENDAR".
+    3. Si pide "cripto" -> categoria="CRIPTO", accion="RECOMENDAR".
+    4. Si dice "Analiza X" (ej: AUDCAD, Rockstar) -> accion="ANALIZAR", ticker="X". (NO USAR COMPARAR).
+    5. Si dice "Apostar contra pais" -> accion="COMPARAR", lista_activos=[TICKERS REALES].
     
     JSON Schema: {{
         "accion": "ANALIZAR"|"COMPARAR"|"RECOMENDAR"|"VIGILAR"|"CHARLA", 
@@ -179,25 +192,25 @@ def interpretar_intencion(msg):
     try:
         resp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user", "content":prompt}, {"role":"system", "content":"JSON only"}])
         data = json.loads(re.search(r"\{.*\}", resp.choices[0].message.content, re.DOTALL).group(0))
+        
+        # Normalizamos aquí
         if data.get("ticker"): data["ticker"] = normalizar_ticker(data["ticker"])
         if data.get("lista_activos"): data["lista_activos"] = [normalizar_ticker(t) for t in data["lista_activos"]]
+        
         return data
     except: return {"accion":"CHARLA", "categoria": "GENERAL"}
 
 def generar_resumen_humano(datos_txt, prob):
-    """Genera una explicación simple para principiantes."""
-    if not client: return "Revisa los indicadores técnicos."
-    
+    if not client: return "Revisa los datos."
     accion = "COMPRAR" if prob > 0.6 else "VENDER" if prob < 0.4 else "ESPERAR"
-    
     try:
         resp = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role":"user", "content":f"Datos: {datos_txt}. Probabilidad: {prob}. Explica en 15 palabras por qué debo {accion}. Usa lenguaje muy simple."}],
+            messages=[{"role":"user", "content":f"Datos: {datos_txt}. Prob: {prob}. Explica en 15 palabras sencillas por qué {accion}."}],
             max_tokens=40
         )
         return resp.choices[0].message.content.replace('"', '')
-    except: return "Mercado volátil, ten cuidado."
+    except: return "Mercado incierto."
 
 # --- 6. MOTOR ANALÍTICO ---
 async def motor_analisis(ticker, estilo="SCALPING"):
@@ -207,7 +220,9 @@ async def motor_analisis(ticker, estilo="SCALPING"):
     backup_mode = False
 
     try:
+        # Intento 1
         df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
+        # Intento 2 (Backup)
         if df is None or df.empty or len(df) < 5:
             inv, per = "1d", "1y"
             df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
@@ -226,11 +241,10 @@ async def motor_analisis(ticker, estilo="SCALPING"):
         
         row = clean.iloc[-1]
         
-        # --- VEREDICTO CLARO ---
-        if prob > 0.65: señal, icono, accion_txt = "ALCISTA", "🟢", "COMPRAR AHORA 🚀"
-        elif prob > 0.55: señal, icono, accion_txt = "MODERADA", "🟢", "COMPRA CON CUIDADO ✅"
+        if prob > 0.65: señal, icono, accion_txt = "ALCISTA", "🟢", "COMPRAR 🚀"
+        elif prob > 0.55: señal, icono, accion_txt = "MODERADA", "🟢", "COMPRA CAUTELOSA ✅"
         elif prob < 0.40: señal, icono, accion_txt = "BAJISTA", "🔴", "NO COMPRAR / VENDER ❌"
-        else: señal, icono, accion_txt = "NEUTRAL", "⚪", "MEJOR ESPERAR ✋"
+        else: señal, icono, accion_txt = "NEUTRAL", "⚪", "ESPERAR ✋"
 
         fmt = ",.4f" if row['Close'] < 50 else ",.2f"
         if "COP" in ticker or "CLP" in ticker or "ARS" in ticker: fmt = ",.0f"
@@ -244,7 +258,7 @@ async def motor_analisis(ticker, estilo="SCALPING"):
             "icono": icono,
             "ticker": ticker,
             "backup": backup_mode,
-            "veredicto": accion_txt # Nuevo campo para principiantes
+            "veredicto": accion_txt
         }
         return info, prob, row['Close'], clean
     except: return None, 0.0, 0.0, None
@@ -275,6 +289,7 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
     except: acc, est, cat, explicacion = "CHARLA", "SCALPING", "GENERAL", None
     
+    # CASO COMPARAR / ESTRATEGIA
     if acc == "COMPARAR" and lst:
         titulo = "📊 **Estrategia**" if explicacion else "⚖️ **Comparando**"
         msg = await update.message.reply_text(f"{titulo}...")
@@ -290,9 +305,11 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if found: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
         else: await update.message.reply_text("❌ Sin datos.")
 
+    # CASO RECOMENDAR (ESCÁNER POR CATEGORÍA REAL)
     elif acc == "RECOMENDAR":
         msg = await update.message.reply_text(f"🔎 Buscando en **{cat}**...")
-        cands = await escanear_mercado_real(cat, est)
+        # Aquí pasamos la categoría correcta al escáner
+        cands = await escanear_mercado_real(cat, est) 
         reporte = f"⚡ **MEJORES {cat}**\n━━━━━━━━━━━━━━━━━━\n"
         found = False
         for t in cands:
@@ -302,8 +319,9 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 reporte += f"🔥 **{info['ticker']}**\n💰 ${info['precio']} | {info['veredicto']}\n🎯 TP: ${info['tp']}\n〰〰〰〰〰〰〰〰〰\n"
         await msg.delete()
         if found: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
-        else: await update.message.reply_text(f"💤 Sin oportunidades claras en {cat}.")
+        else: await update.message.reply_text(f"💤 Sin oportunidades en {cat}.")
 
+    # CASO ANALIZAR UNO SOLO
     elif acc == "ANALIZAR" and tick:
         msg = await update.message.reply_text(f"🔎 Analizando {tick}...")
         info, prob, _, _ = await motor_analisis(tick, est)
@@ -320,8 +338,9 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"📝 **Por qué:** _{resumen}_\n\n"
                 f"🛡️ **Plan de Gestión:**\n"
-                f"⛔ Stop Loss: `${info['sl']}`\n"
-                f"🎯 Take Profit: `${info['tp']}`\n"
+                f"⛔ SL: `${info['sl']}`\n"
+                f"🎯 TP: `${info['tp']}`\n\n"
+                f"📉 **RSI:** `{info['rsi']}`"
             )
             await msg.delete()
             await update.message.reply_text(tarjeta, parse_mode=ParseMode.MARKDOWN)
@@ -334,7 +353,7 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         guardar_cartera(c)
         await update.message.reply_text(f"🛡️ Vigilando {tick}")
 
-    else: await update.message.reply_text("👋 Soy tu Bot.\nDime 'Analiza Rockstar' o 'Contra Chile'.")
+    else: await update.message.reply_text("👋 Soy tu Bot.\nDime 'Analiza AUDCAD' o 'Qué acciones compro'.")
 
 async def guardian_cartera(context: ContextTypes.DEFAULT_TYPE):
     c = cargar_cartera()
@@ -352,5 +371,5 @@ if __name__ == '__main__':
     app = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), manejar_mensaje_ia))
     if app.job_queue: app.job_queue.run_repeating(guardian_cartera, interval=900, first=30)
-    print("🤖 BOT GLOBAL ACTIVO")
+    print("🤖 BOT FINAL ACTIVO")
     app.run_polling()
