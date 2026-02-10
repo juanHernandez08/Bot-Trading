@@ -100,26 +100,27 @@ async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
             if t in df.columns:
                 p = df[t].dropna()
                 if len(p) > 5:
-                     # Volatilidad simple para filtrar activos muertos
                     vol = abs((p.iloc[-1] - p.iloc[-4])/p.iloc[-4])
                     if vol > 0.001: cands.append(t)
         return cands[:5]
     except: return lista[:3]
 
-# --- 4. INTELIGENCIA ARTIFICIAL (EL CEREBRO ESTRATEGA) ---
+# --- 4. INTELIGENCIA ARTIFICIAL & DICCIONARIOS ---
 client = None
 if Config.GROQ_API_KEY:
     try: client = OpenAI(api_key=Config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
     except: pass
 
+# DICCIONARIO DE TRADUCCIÓN (Para que no busque Apple cuando pides Rockstar)
 SINONIMOS = {
     "DOLAR": "COP=X", "USD": "COP=X", "EURO": "EURUSD=X",
     "BITCOIN": "BTC-USD", "BTC": "BTC-USD",
     "ETH": "ETH-USD", "ETHEREUM": "ETH-USD",
     "ORO": "GLD", "GOLD": "GLD", "PLATA": "SLV",
     "PETROLEO": "USO", "OIL": "USO",
-    "TESLA": "TSLA", "NVIDIA": "NVDA", "APPLE": "AAPL",
-    "ROCKSTAR": "TTWO", "GTA": "TTWO" # Take-Two Interactive
+    "TESLA": "TSLA", "NVIDIA": "NVDA", "APPLE": "AAPL", "GOOGLE": "GOOGL", "META": "META",
+    "ROCKSTAR": "TTWO", "GTA": "TTWO", "TAKE TWO": "TTWO",
+    "AMAZON": "AMZN", "MICROSOFT": "MSFT"
 }
 
 def normalizar_ticker(ticker):
@@ -130,13 +131,15 @@ def normalizar_ticker(ticker):
 def interpretar_intencion(msg):
     if not client: return {"accion": "CHARLA"}
     
-    # PROMPT AVANZADO: Interpreta conceptos abstractos
+    # PROMPT DE HEDGE FUND: Interpreta estrategias complejas
     prompt = f"""
     Analiza: "{msg}".
+    
     Reglas:
     1. Si no hay tiempo explícito, asume "SCALPING".
-    2. Si el usuario pide una ESTRATEGIA (ej: "Apostar contra EEUU", "Crisis económica", "Shortear Tech"), 
-       en "accion" pon "COMPARAR" y en "lista_activos" pon los TICKERS reales correspondientes (ej: SQQQ, SPXU, GLD).
+    2. Si el usuario pide una ESTRATEGIA ABSTRACTA (ej: "Apostar contra EEUU", "Crisis", "Caída del mercado", "Shortear Tech"):
+       -> Pon accion="COMPARAR".
+       -> En "lista_activos" pon los TICKERS REALES que ganan en ese escenario (ej: SQQQ, SPXU, GLD, VIXY).
     3. JSON Only.
     
     JSON Schema: {{"accion": "ANALIZAR"|"COMPARAR"|"RECOMENDAR"|"VIGILAR"|"CHARLA", "ticker": "S"|null, "lista_activos": ["A", "B"]|null, "estilo": "SCALPING"|"SWING"}}
@@ -145,7 +148,7 @@ def interpretar_intencion(msg):
         resp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user", "content":prompt}, {"role":"system", "content":"JSON only"}])
         data = json.loads(re.search(r"\{.*\}", resp.choices[0].message.content, re.DOTALL).group(0))
         
-        # Limpieza de Tickers
+        # Limpieza de Tickers con el Diccionario
         if data.get("ticker"): data["ticker"] = normalizar_ticker(data["ticker"])
         if data.get("lista_activos"): data["lista_activos"] = [normalizar_ticker(t) for t in data["lista_activos"]]
         
@@ -169,7 +172,7 @@ def generar_resumen_breve(datos_txt, prob):
 
 # --- 5. MOTOR DE ANÁLISIS ---
 async def motor_analisis(ticker, estilo="SCALPING"):
-    await asyncio.sleep(0.5) # Reducimos espera para comparaciones más rápidas
+    await asyncio.sleep(0.5) 
     if not estilo: estilo = "SCALPING"
     inv, per = ("1d", "1y") if estilo == "SWING" else ("15m", "5d")
 
@@ -194,7 +197,7 @@ async def motor_analisis(ticker, estilo="SCALPING"):
         
         row = clean.iloc[-1]
         
-        # Lógica de Señal
+        # Señales
         if prob > 0.60: señal, icono = "ALCISTA", "🟢"
         elif prob > 0.50: señal, icono = "NEUTRAL", "⚪"
         else: señal, icono = "BAJISTA", "🔴"
@@ -203,7 +206,7 @@ async def motor_analisis(ticker, estilo="SCALPING"):
         fmt = ",.4f" if row['Close'] < 50 else ",.2f"
         if "COP" in ticker: fmt = ",.0f"
 
-        # --- OBJETO DE DATOS (Para usar en tarjeta o lista) ---
+        # --- OBJETO DE DATOS (Vital para el formato Mini-Sniper) ---
         info = {
             "precio": format(row['Close'], fmt),
             "sl": format(row['Stop_Loss'], fmt),
@@ -239,10 +242,9 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
     except: acc, est = "CHARLA", "SCALPING"
     
-    # ---------------- CASO 1: COMPARACIÓN / ESTRATEGIA ----------------
+    # ---------------- CASO 1: COMPARACIÓN (Formato Mini-Sniper) ----------------
     if acc == "COMPARAR" and lst:
-        # Mensaje inicial dinámico
-        titulo = "📊 **Análisis Estratégico**" if len(lst) > 3 else f"⚖️ **Comparando {len(lst)} activos**"
+        titulo = "📊 **Estrategia**" if len(lst) > 3 else f"⚖️ **Comparando {len(lst)} activos**"
         msg = await update.message.reply_text(f"{titulo} ({est})...")
         
         reporte_final = f"{titulo} | {est}\n━━━━━━━━━━━━━━━━━━\n"
@@ -251,8 +253,8 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         for t in lst:
             info, prob, _, _ = await motor_analisis(t, est)
             if info:
-                # --- FORMATO MINI-SNIPER PARA LISTAS ---
                 activos_validos += 1
+                # TARJETA COMPACTA PARA LISTAS
                 mini_card = (
                     f"💎 **{info['ticker']}**\n"
                     f"💰 ${info['precio']} | {info['icono']} {info['señal']} ({prob*100:.0f}%)\n"
@@ -265,7 +267,7 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if activos_validos > 0:
             await update.message.reply_text(reporte_final, parse_mode=ParseMode.MARKDOWN)
         else:
-            await update.message.reply_text("❌ No encontré datos de esos activos.")
+            await update.message.reply_text("❌ No encontré datos para esa estrategia.")
 
     # ---------------- CASO 2: ESCÁNER GENERAL ----------------
     elif acc == "RECOMENDAR":
@@ -281,7 +283,7 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 mini_card = (
                     f"🔥 **{info['ticker']}**\n"
                     f"💰 ${info['precio']} | Prob: {prob*100:.0f}%\n"
-                    f"🎯 Objetivo: ${info['tp']}\n"
+                    f"🎯 TP: ${info['tp']}\n"
                     f"〰〰〰〰〰〰〰〰〰\n"
                 )
                 reporte += mini_card
@@ -292,16 +294,14 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         else:
             await update.message.reply_text("💤 Mercado lateral. Mejor esperar.")
 
-    # ---------------- CASO 3: ANÁLISIS INDIVIDUAL (FULL CARD) ----------------
+    # ---------------- CASO 3: ANÁLISIS INDIVIDUAL (Full Card) ----------------
     elif acc == "ANALIZAR" and tick:
         msg = await update.message.reply_text(f"🔎 Analizando {tick}...")
         info, prob, _, _ = await motor_analisis(tick, est)
         
         if info:
-            # Generar Resumen IA
             resumen = generar_resumen_breve(f"RSI:{info['rsi']}, Prob:{prob:.2f}", prob)
             
-            # --- TARJETA DE FRANCOTIRADOR COMPLETA ---
             tarjeta = (
                 f"💎 **{info['ticker']}** | {est.upper()}\n"
                 f"💵 **Precio:** `${info['precio']}`\n"
@@ -329,7 +329,7 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"🛡️ Vigilando {tick}")
 
     else:
-        await update.message.reply_text("👋 Soy tu Bot.\nPrueba: 'Apostar contra EEUU' o 'Analiza Bitcoin'.")
+        await update.message.reply_text("👋 Soy tu Bot.\nPrueba: 'Apostar contra EEUU' o 'Analiza Rockstar'.")
 
 # --- 7. GUARDIÁN ---
 async def guardian_cartera(context: ContextTypes.DEFAULT_TYPE):
