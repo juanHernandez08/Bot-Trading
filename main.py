@@ -17,16 +17,18 @@ class Config:
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# --- IMPORTACIÓN INTELIGENTE (PARCHE PARA TU ERROR DE CARPETAS) ---
+# --- IMPORTACIÓN INTELIGENTE ---
 try:
-    # Intenta buscar 'src' (Estructura ideal)
+    # Intenta buscar 'src'
     from src.features import preparar_datos
     from src.model_handler import Predictor
     from src.scanner import escanear_mercado_real
-    from src.brain import interpretar_intencion, generar_respuesta_natural, generar_recomendacion_mercado
+    from src.brain import interpreting_intencion, generar_respuesta_natural, generar_recomendacion_mercado
+    # Nota: Si brain tiene otro nombre de funciones, ajústalo aquí. Asumo que son estas.
+    from src.brain import interpretar_intencion # Corrección nombre
     print("✅ Módulos cargados desde carpeta 'src/'")
 except ImportError:
-    # Si falla, busca en la raíz (Tu caso actual)
+    # Si falla, busca en la raíz
     try:
         from features import preparar_datos
         from model_handler import Predictor
@@ -34,7 +36,7 @@ except ImportError:
         from brain import interpretar_intencion, generar_respuesta_natural, generar_recomendacion_mercado
         print("✅ Módulos cargados desde la raíz (archivos sueltos)")
     except ImportError as e:
-        print(f"❌ ERROR CRÍTICO: No encuentro los archivos brain.py, features.py, etc. {e}")
+        print(f"❌ ERROR CRÍTICO: No encuentro los archivos. {e}")
         exit()
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -49,23 +51,32 @@ NOMBRES_ACTIVOS = {
 def obtener_nombre_bonito(ticker):
     return f"{NOMBRES_ACTIVOS.get(ticker, ticker)} ({ticker})"
 
-# --- CARTERA ---
+# --- CARTERA (DATABASE SIMPLE) ---
 ARCHIVO_CARTERA = 'cartera.json'
+
 def cargar_cartera():
     try:
-        if not os.path.exists(ARCHIVO_CARTERA): return []
-        with open(ARCHIVO_CARTERA, 'r') as f: return json.load(f)
-    except: return []
+        if not os.path.exists(ARCHIVO_CARTERA):
+            return []
+        with open(ARCHIVO_CARTERA, 'r') as f:
+            return json.load(f)
+    except:
+        return []
 
 def guardar_cartera(datos):
-    try: with open(ARCHIVO_CARTERA, 'w') as f: json.dump(datos, f)
-    except: pass
+    try:
+        with open(ARCHIVO_CARTERA, 'w') as f:
+            json.dump(datos, f)
+    except:
+        pass
 
 # --- MOTOR DE ANÁLISIS ---
 async def motor_analisis(ticker, estilo="SCALPING"):
     await asyncio.sleep(1) 
-    if estilo == "SWING": intervalo, periodo, tipo = "1d", "1y", "Swing"
-    else: intervalo, periodo, tipo = "15m", "5d", "Scalping"
+    if estilo == "SWING":
+        intervalo, periodo, tipo = "1d", "1y", "Swing"
+    else:
+        intervalo, periodo, tipo = "15m", "5d", "Scalping"
 
     try:
         df = yf.download(ticker, period=periodo, interval=intervalo, progress=False, auto_adjust=True)
@@ -74,13 +85,16 @@ async def motor_analisis(ticker, estilo="SCALPING"):
                 print(f"⚠️ {ticker}: Backup Diario activado...")
                 intervalo, periodo, tipo = "1d", "1y", "Swing (Backup)"
                 df = yf.download(ticker, period=periodo, interval=intervalo, progress=False, auto_adjust=True)
-    except: return None, 0.0, 0.0
+    except:
+        return None, 0.0, 0.0
 
-    if df is None or df.empty: return None, 0.0, 0.0
+    if df is None or df.empty:
+        return None, 0.0, 0.0
     
     try:
         clean_data = preparar_datos(df)
-        if clean_data.empty: return None, 0.0, 0.0
+        if clean_data.empty:
+            return None, 0.0, 0.0
         
         data_train = clean_data.iloc[:-1] 
         ultimo_dato = clean_data.iloc[[-1]]
@@ -100,7 +114,8 @@ async def motor_analisis(ticker, estilo="SCALPING"):
             f"🎯 TAKE PROFIT: ${format(fila['Take_Profit'], fmt)}\nPROBABILIDAD: {prob*100:.1f}%"
         )
         return datos_txt, prob, fila['Close']
-    except: return None, 0.0, 0.0
+    except:
+        return None, 0.0, 0.0
 
 # --- CONTROLADOR ---
 async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -110,10 +125,13 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         ment = interpretar_intencion(texto)
         accion = ment.get("accion", "CHARLA")
-        ticker, lista = ment.get("ticker"), ment.get("lista_activos", [])
+        ticker = ment.get("ticker")
+        lista = ment.get("lista_activos", [])
         estilo = ment.get("estilo", "SCALPING")
-        if accion == "ANALIZAR" and not ticker and not lista: accion = "RECOMENDAR"
-    except: accion, estilo = "CHARLA", "SCALPING"
+        if accion == "ANALIZAR" and not ticker and not lista:
+            accion = "RECOMENDAR"
+    except:
+        accion, estilo = "CHARLA", "SCALPING"
     
     print(f"🧠 {accion} | {ticker or lista}")
 
@@ -123,10 +141,13 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         for t in lista:
             await asyncio.sleep(1)
             txt, prob, precio = await motor_analisis(t, estilo)
-            if txt: reporte += f"- {t}: ${precio:.2f} | {prob*100:.1f}%\n"
+            if txt:
+                reporte += f"- {t}: ${precio:.2f} | {prob*100:.1f}%\n"
         await msg.delete()
-        if reporte: await update.message.reply_text(generar_recomendacion_mercado(reporte, "COMPARATIVA"), parse_mode=ParseMode.MARKDOWN)
-        else: await update.message.reply_text("❌ Sin datos.")
+        if reporte:
+            await update.message.reply_text(generar_recomendacion_mercado(reporte, "COMPARATIVA"), parse_mode=ParseMode.MARKDOWN)
+        else:
+            await update.message.reply_text("❌ Sin datos.")
 
     elif accion == "RECOMENDAR":
         msg = await update.message.reply_text("🔎 **Escaneando...**")
@@ -138,11 +159,14 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reporte = ""
         for t in candidatos:
             txt, prob, precio = await motor_analisis(t, estilo)
-            if prob > 0.5: reporte += f"- {t}: ${precio:.2f} | {prob*100:.1f}%\n"
+            if prob > 0.5:
+                reporte += f"- {t}: ${precio:.2f} | {prob*100:.1f}%\n"
         
         await msg.delete()
-        if reporte: await update.message.reply_text(generar_recomendacion_mercado(reporte, estilo), parse_mode=ParseMode.MARKDOWN)
-        else: await update.message.reply_text("📉 Nada claro ahora.")
+        if reporte:
+            await update.message.reply_text(generar_recomendacion_mercado(reporte, estilo), parse_mode=ParseMode.MARKDOWN)
+        else:
+            await update.message.reply_text("📉 Nada claro ahora.")
 
     elif accion == "ANALIZAR" and ticker:
         msg = await update.message.reply_text(f"🔎 Analizando **{ticker}**...")
@@ -151,7 +175,8 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
             resp = generar_respuesta_natural(txt, texto)
             await msg.delete()
             await update.message.reply_text(resp, parse_mode=ParseMode.MARKDOWN)
-        else: await msg.edit_text("⚠️ No encontré datos.")
+        else:
+            await msg.edit_text("⚠️ No encontré datos.")
 
     elif accion == "VIGILAR" and ticker:
         _, _, p = await motor_analisis(ticker, "SWING")
@@ -160,7 +185,8 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         guardar_cartera(cartera)
         await update.message.reply_text(f"🛡️ Vigilando {ticker}")
 
-    else: await update.message.reply_text("👋 Soy tu Bot de Trading. Dime 'Analiza Bitcoin'.")
+    else:
+        await update.message.reply_text("👋 Soy tu Bot de Trading. Dime 'Analiza Bitcoin'.")
 
 async def guardian_cartera(context: ContextTypes.DEFAULT_TYPE):
     cartera = cargar_cartera()
@@ -176,9 +202,15 @@ async def guardian_cartera(context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id=Config.TELEGRAM_CHAT_ID, text=f"🚨 **ALERTA {ticker}**\n{emoji} Movimiento: {cambio*100:.1f}%")
 
 if __name__ == '__main__':
-    if not Config.TELEGRAM_TOKEN: exit()
+    if not Config.TELEGRAM_TOKEN:
+        print("❌ ERROR: Falta TELEGRAM_TOKEN")
+        exit()
+        
     app = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), manejar_mensaje_ia))
-    if app.job_queue: app.job_queue.run_repeating(guardian_cartera, interval=900, first=30)
+    
+    if app.job_queue:
+        app.job_queue.run_repeating(guardian_cartera, interval=900, first=30)
+        
     print("🤖 BOT ACTIVO EN RAILWAY")
     app.run_polling()
