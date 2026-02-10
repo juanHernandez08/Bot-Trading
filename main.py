@@ -111,7 +111,6 @@ if Config.GROQ_API_KEY:
     try: client = OpenAI(api_key=Config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
     except: pass
 
-# DICCIONARIO DE TRADUCCIÓN (Para que no busque Apple cuando pides Rockstar)
 SINONIMOS = {
     "DOLAR": "COP=X", "USD": "COP=X", "EURO": "EURUSD=X",
     "BITCOIN": "BTC-USD", "BTC": "BTC-USD",
@@ -131,24 +130,30 @@ def normalizar_ticker(ticker):
 def interpretar_intencion(msg):
     if not client: return {"accion": "CHARLA"}
     
-    # PROMPT DE HEDGE FUND: Interpreta estrategias complejas
+    # PROMPT MEJORADO: PIDE EL "POR QUÉ" (explicacion)
     prompt = f"""
     Analiza: "{msg}".
     
     Reglas:
     1. Si no hay tiempo explícito, asume "SCALPING".
-    2. Si el usuario pide una ESTRATEGIA ABSTRACTA (ej: "Apostar contra EEUU", "Crisis", "Caída del mercado", "Shortear Tech"):
-       -> Pon accion="COMPARAR".
-       -> En "lista_activos" pon los TICKERS REALES que ganan en ese escenario (ej: SQQQ, SPXU, GLD, VIXY).
+    2. Si pide ESTRATEGIA ABSTRACTA (ej: "Apostar contra EEUU", "Crisis"):
+       -> accion="COMPARAR"
+       -> lista_activos=TICKERS REALES (ej: SQQQ, SPXU, GLD).
+       -> explicacion="Breve frase de por qué elegiste esos activos (ej: 'Son ETFs inversos que ganan cuando cae el S&P500')."
     3. JSON Only.
     
-    JSON Schema: {{"accion": "ANALIZAR"|"COMPARAR"|"RECOMENDAR"|"VIGILAR"|"CHARLA", "ticker": "S"|null, "lista_activos": ["A", "B"]|null, "estilo": "SCALPING"|"SWING"}}
+    JSON Schema: {{
+        "accion": "ANALIZAR"|"COMPARAR"|"RECOMENDAR"|"VIGILAR"|"CHARLA", 
+        "ticker": "S"|null, 
+        "lista_activos": ["A", "B"]|null, 
+        "estilo": "SCALPING"|"SWING",
+        "explicacion": "Texto breve"|null
+    }}
     """
     try:
         resp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user", "content":prompt}, {"role":"system", "content":"JSON only"}])
         data = json.loads(re.search(r"\{.*\}", resp.choices[0].message.content, re.DOTALL).group(0))
         
-        # Limpieza de Tickers con el Diccionario
         if data.get("ticker"): data["ticker"] = normalizar_ticker(data["ticker"])
         if data.get("lista_activos"): data["lista_activos"] = [normalizar_ticker(t) for t in data["lista_activos"]]
         
@@ -180,7 +185,7 @@ async def motor_analisis(ticker, estilo="SCALPING"):
         df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
         if df is None or df.empty:
             if estilo == "SCALPING":
-                inv, per = "1d", "1y" # Fallback silencioso a diario
+                inv, per = "1d", "1y"
                 df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
         
         if df is None or df.empty: return None, 0.0, 0.0, None
@@ -188,7 +193,6 @@ async def motor_analisis(ticker, estilo="SCALPING"):
         clean = preparar_datos(df)
         if clean.empty: return None, 0.0, 0.0, None
         
-        # Predicción
         prob = 0.5
         if len(clean) > 15:
             brain = Predictor()
@@ -197,16 +201,13 @@ async def motor_analisis(ticker, estilo="SCALPING"):
         
         row = clean.iloc[-1]
         
-        # Señales
         if prob > 0.60: señal, icono = "ALCISTA", "🟢"
         elif prob > 0.50: señal, icono = "NEUTRAL", "⚪"
         else: señal, icono = "BAJISTA", "🔴"
 
-        # Formato Inteligente
         fmt = ",.4f" if row['Close'] < 50 else ",.2f"
         if "COP" in ticker: fmt = ",.0f"
 
-        # --- OBJETO DE DATOS (Vital para el formato Mini-Sniper) ---
         info = {
             "precio": format(row['Close'], fmt),
             "sl": format(row['Stop_Loss'], fmt),
@@ -239,22 +240,27 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         tick = data.get("ticker")
         lst = data.get("lista_activos")
         est = data.get("estilo", "SCALPING")
+        explicacion = data.get("explicacion") # CAPTURAMOS LA EXPLICACIÓN
+        
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
-    except: acc, est = "CHARLA", "SCALPING"
+    except: acc, est, explicacion = "CHARLA", "SCALPING", None
     
-    # ---------------- CASO 1: COMPARACIÓN (Formato Mini-Sniper) ----------------
+    # ---------------- CASO 1: COMPARACIÓN / ESTRATEGIA ----------------
     if acc == "COMPARAR" and lst:
         titulo = "📊 **Estrategia**" if len(lst) > 3 else f"⚖️ **Comparando {len(lst)} activos**"
         msg = await update.message.reply_text(f"{titulo} ({est})...")
         
-        reporte_final = f"{titulo} | {est}\n━━━━━━━━━━━━━━━━━━\n"
-        activos_validos = 0
+        # INCLUIMOS LA EXPLICACIÓN AQUÍ
+        reporte_final = f"{titulo} | {est}\n"
+        if explicacion:
+            reporte_final += f"💡 _{explicacion}_\n"
+        reporte_final += "━━━━━━━━━━━━━━━━━━\n"
         
+        activos_validos = 0
         for t in lst:
             info, prob, _, _ = await motor_analisis(t, est)
             if info:
                 activos_validos += 1
-                # TARJETA COMPACTA PARA LISTAS
                 mini_card = (
                     f"💎 **{info['ticker']}**\n"
                     f"💰 ${info['precio']} | {info['icono']} {info['señal']} ({prob*100:.0f}%)\n"
@@ -267,7 +273,7 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if activos_validos > 0:
             await update.message.reply_text(reporte_final, parse_mode=ParseMode.MARKDOWN)
         else:
-            await update.message.reply_text("❌ No encontré datos para esa estrategia.")
+            await update.message.reply_text("❌ No encontré datos.")
 
     # ---------------- CASO 2: ESCÁNER GENERAL ----------------
     elif acc == "RECOMENDAR":
@@ -292,16 +298,15 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if encontrado:
             await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
         else:
-            await update.message.reply_text("💤 Mercado lateral. Mejor esperar.")
+            await update.message.reply_text("💤 Mercado lateral.")
 
-    # ---------------- CASO 3: ANÁLISIS INDIVIDUAL (Full Card) ----------------
+    # ---------------- CASO 3: ANÁLISIS INDIVIDUAL ----------------
     elif acc == "ANALIZAR" and tick:
         msg = await update.message.reply_text(f"🔎 Analizando {tick}...")
         info, prob, _, _ = await motor_analisis(tick, est)
         
         if info:
             resumen = generar_resumen_breve(f"RSI:{info['rsi']}, Prob:{prob:.2f}", prob)
-            
             tarjeta = (
                 f"💎 **{info['ticker']}** | {est.upper()}\n"
                 f"💵 **Precio:** `${info['precio']}`\n"
@@ -331,7 +336,6 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         await update.message.reply_text("👋 Soy tu Bot.\nPrueba: 'Apostar contra EEUU' o 'Analiza Rockstar'.")
 
-# --- 7. GUARDIÁN ---
 async def guardian_cartera(context: ContextTypes.DEFAULT_TYPE):
     c = cargar_cartera()
     if not c or not Config.TELEGRAM_CHAT_ID: return
