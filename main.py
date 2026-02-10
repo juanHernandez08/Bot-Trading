@@ -3,57 +3,54 @@ import json
 import os
 import asyncio
 from datetime import datetime
-from dotenv import load_dotenv # Asegúrate de que esto esté aquí
+from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 import yfinance as yf 
 
-# --- CARGAR VARIABLES DE ENTORNO ---
-load_dotenv() # Esto lee el archivo .env en tu PC (y Railway usa sus Variables propias)
+# --- CARGAR VARIABLES ---
+load_dotenv()
 
-# --- CLASE DE CONFIGURACIÓN (INTEGRADA AQUÍ MISMO) ---
 class Config:
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# --- TUS MÓDULOS (SRC SÍ DEBE ESTAR SUBIDO) ---
-# Si src/ tampoco se subió, avísame, pero probemos arreglando config primero.
+# --- IMPORTACIÓN INTELIGENTE (PARCHE PARA TU ERROR DE CARPETAS) ---
 try:
+    # Intenta buscar 'src' (Estructura ideal)
     from src.features import preparar_datos
     from src.model_handler import Predictor
     from src.scanner import escanear_mercado_real
-    from src.brain import (
-        interpretar_intencion, 
-        generar_respuesta_natural, 
-        generar_recomendacion_mercado
-    )
-except ImportError as e:
-    print(f"❌ ERROR CRÍTICO IMPORTANDO SRC: {e}")
-    print("Asegúrate de que la carpeta 'src' y sus archivos (__init__.py, brain.py, etc.) estén en GitHub.")
-    exit()
+    from src.brain import interpretar_intencion, generar_respuesta_natural, generar_recomendacion_mercado
+    print("✅ Módulos cargados desde carpeta 'src/'")
+except ImportError:
+    # Si falla, busca en la raíz (Tu caso actual)
+    try:
+        from features import preparar_datos
+        from model_handler import Predictor
+        from scanner import escanear_mercado_real
+        from brain import interpretar_intencion, generar_respuesta_natural, generar_recomendacion_mercado
+        print("✅ Módulos cargados desde la raíz (archivos sueltos)")
+    except ImportError as e:
+        print(f"❌ ERROR CRÍTICO: No encuentro los archivos brain.py, features.py, etc. {e}")
+        exit()
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # --- NOMBRES COSMÉTICOS ---
 NOMBRES_ACTIVOS = {
-    'GLD': 'Oro (ETF)',
-    'USO': 'Petróleo (ETF)',
-    'BTC-USD': 'Bitcoin',
-    'ETH-USD': 'Ethereum',
-    'TSLA': 'Tesla',
-    'EURUSD=X': 'Euro/Dólar',
-    'NVDA': 'NVIDIA',
-    'AMZN': 'Amazon'
+    'GLD': 'Oro (ETF)', 'USO': 'Petróleo (ETF)', 'BTC-USD': 'Bitcoin',
+    'ETH-USD': 'Ethereum', 'TSLA': 'Tesla', 'EURUSD=X': 'Euro/Dólar',
+    'COP=X': 'Peso Colombiano', 'MXN=X': 'Peso Mexicano'
 }
 
 def obtener_nombre_bonito(ticker):
     return f"{NOMBRES_ACTIVOS.get(ticker, ticker)} ({ticker})"
 
-# --- CARTERA (DATABASE SIMPLE) ---
+# --- CARTERA ---
 ARCHIVO_CARTERA = 'cartera.json'
-
 def cargar_cartera():
     try:
         if not os.path.exists(ARCHIVO_CARTERA): return []
@@ -61,43 +58,30 @@ def cargar_cartera():
     except: return []
 
 def guardar_cartera(datos):
-    try:
-        with open(ARCHIVO_CARTERA, 'w') as f: json.dump(datos, f)
-    except Exception as e:
-        print(f"Error guardando cartera: {e}")
+    try: with open(ARCHIVO_CARTERA, 'w') as f: json.dump(datos, f)
+    except: pass
 
 # --- MOTOR DE ANÁLISIS ---
 async def motor_analisis(ticker, estilo="SCALPING"):
     await asyncio.sleep(1) 
-    
-    if estilo == "SWING":
-        intervalo, periodo, tipo = "1d", "1y", "Swing"
-    else:
-        intervalo, periodo, tipo = "15m", "5d", "Scalping"
+    if estilo == "SWING": intervalo, periodo, tipo = "1d", "1y", "Swing"
+    else: intervalo, periodo, tipo = "15m", "5d", "Scalping"
 
     try:
-        # Auto-adjust=True ayuda a limpiar datos raros de Yahoo
         df = yf.download(ticker, period=periodo, interval=intervalo, progress=False, auto_adjust=True)
-        
-        # Fallback (Respaldo) si 15m falla
         if df is None or df.empty:
             if estilo == "SCALPING":
-                print(f"⚠️ {ticker}: Sin datos 15m. Backup Diario...")
+                print(f"⚠️ {ticker}: Backup Diario activado...")
                 intervalo, periodo, tipo = "1d", "1y", "Swing (Backup)"
                 df = yf.download(ticker, period=periodo, interval=intervalo, progress=False, auto_adjust=True)
-
-    except Exception as e:
-        print(f"Error descarga {ticker}: {e}")
-        return None, 0.0, 0.0
+    except: return None, 0.0, 0.0
 
     if df is None or df.empty: return None, 0.0, 0.0
     
     try:
         clean_data = preparar_datos(df)
-        
         if clean_data.empty: return None, 0.0, 0.0
-
-        # Separar entrenamiento (pasado) de predicción (presente)
+        
         data_train = clean_data.iloc[:-1] 
         ultimo_dato = clean_data.iloc[[-1]]
 
@@ -107,100 +91,59 @@ async def motor_analisis(ticker, estilo="SCALPING"):
             cerebro.entrenar(data_train)
             _, prob = cerebro.predecir_mañana(clean_data)
         
-        # Datos de la vela actual
-        fila_actual = ultimo_dato.iloc[0]
-        precio = fila_actual['Close']
-        stop_loss = fila_actual['Stop_Loss']
-        take_profit = fila_actual['Take_Profit']
-        rsi = fila_actual['RSI']
+        fila = ultimo_dato.iloc[0]
+        fmt = ".4f" if fila['Close'] < 50 else ".2f"
         
-        # Formato decimales
-        fmt = ".4f" if precio < 50 else ".2f"
-
         datos_txt = (
-            f"MODO: {tipo}\n"
-            f"ACTIVO: {ticker}\n"
-            f"PRECIO: ${format(precio, fmt)}\n" 
-            f"RSI: {rsi:.1f}\n"
-            f"⛔ STOP LOSS: ${format(stop_loss, fmt)}\n"
-            f"🎯 TAKE PROFIT: ${format(take_profit, fmt)}\n"
-            f"PROBABILIDAD SUBIDA: {prob*100:.1f}%\n"
+            f"MODO: {tipo}\nACTIVO: {ticker}\nPRECIO: ${format(fila['Close'], fmt)}\n"
+            f"RSI: {fila['RSI']:.1f}\n⛔ STOP LOSS: ${format(fila['Stop_Loss'], fmt)}\n"
+            f"🎯 TAKE PROFIT: ${format(fila['Take_Profit'], fmt)}\nPROBABILIDAD: {prob*100:.1f}%"
         )
-        return datos_txt, prob, precio
-
-    except Exception as e:
-        print(f"Error procesando {ticker}: {e}")
-        return None, 0.0, 0.0
+        return datos_txt, prob, fila['Close']
+    except: return None, 0.0, 0.0
 
 # --- CONTROLADOR ---
 async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
-    # Enviar acción "escribiendo..."
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
     
     try:
         ment = interpretar_intencion(texto)
         accion = ment.get("accion", "CHARLA")
-        ticker = ment.get("ticker")
-        lista = ment.get("lista_activos", [])
-        categoria = ment.get("categoria", "GENERAL")
+        ticker, lista = ment.get("ticker"), ment.get("lista_activos", [])
         estilo = ment.get("estilo", "SCALPING")
-        
-        if accion == "ANALIZAR" and not ticker and not lista:
-            accion = "RECOMENDAR"
-            
-    except:
-        accion, estilo = "CHARLA", "SCALPING"
+        if accion == "ANALIZAR" and not ticker and not lista: accion = "RECOMENDAR"
+    except: accion, estilo = "CHARLA", "SCALPING"
     
     print(f"🧠 {accion} | {ticker or lista}")
 
-    # --- CASO 1: COMPARAR ---
     if accion == "COMPARAR" and lista:
         msg = await update.message.reply_text(f"⚖️ **Comparando {len(lista)} activos...**")
         reporte = ""
         for t in lista:
-            await asyncio.sleep(1) # Evitar ban de Yahoo
+            await asyncio.sleep(1)
             txt, prob, precio = await motor_analisis(t, estilo)
-            if txt:
-                emoji = "🏆" if prob > 0.6 else "⚠️"
-                reporte += f"- {t}: ${precio:.2f} | Prob: {prob*100:.1f}% {emoji}\n"
-        
+            if txt: reporte += f"- {t}: ${precio:.2f} | {prob*100:.1f}%\n"
         await msg.delete()
-        if reporte:
-            final = generar_recomendacion_mercado(reporte, "COMPARATIVA")
-            await update.message.reply_text(final, parse_mode=ParseMode.MARKDOWN)
-        else:
-            await update.message.reply_text("❌ No pude obtener datos.")
+        if reporte: await update.message.reply_text(generar_recomendacion_mercado(reporte, "COMPARATIVA"), parse_mode=ParseMode.MARKDOWN)
+        else: await update.message.reply_text("❌ Sin datos.")
 
-    # --- CASO 2: RECOMENDAR ---
     elif accion == "RECOMENDAR":
-        msg = await update.message.reply_text(f"🔎 **Escaneando {categoria} ({estilo})...**")
-        candidatos = await escanear_mercado_real(categoria, estilo)
-        
-        if not candidatos:
+        msg = await update.message.reply_text("🔎 **Escaneando...**")
+        candidatos = await escanear_mercado_real("GENERAL", estilo)
+        if not candidatos: 
             await msg.edit_text("💤 Mercado lento.")
             return
-
+        
         reporte = ""
-        for i, t in enumerate(candidatos):
+        for t in candidatos:
             txt, prob, precio = await motor_analisis(t, estilo)
-            # Actualizar mensaje cada 2 activos para que el usuario vea progreso
-            if i % 2 == 0:
-                try: await msg.edit_text(f"⏳ Analizando {t}...") 
-                except: pass
-            
-            if prob > 0.5:
-                emoji = "🔥" if prob > 0.7 else "⚡"
-                reporte += f"- {t}: ${precio:.2f} | {prob*100:.1f}% {emoji}\n"
+            if prob > 0.5: reporte += f"- {t}: ${precio:.2f} | {prob*100:.1f}%\n"
         
         await msg.delete()
-        if reporte:
-            resp = generar_recomendacion_mercado(reporte, estilo)
-            await update.message.reply_text(resp, parse_mode=ParseMode.MARKDOWN)
-        else:
-            await update.message.reply_text("📉 Nada interesante ahora.")
+        if reporte: await update.message.reply_text(generar_recomendacion_mercado(reporte, estilo), parse_mode=ParseMode.MARKDOWN)
+        else: await update.message.reply_text("📉 Nada claro ahora.")
 
-    # --- CASO 3: ANALIZAR UNO ---
     elif accion == "ANALIZAR" and ticker:
         msg = await update.message.reply_text(f"🔎 Analizando **{ticker}**...")
         txt, prob, precio = await motor_analisis(ticker, estilo)
@@ -208,60 +151,34 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
             resp = generar_respuesta_natural(txt, texto)
             await msg.delete()
             await update.message.reply_text(resp, parse_mode=ParseMode.MARKDOWN)
-        else:
-            await msg.edit_text(f"⚠️ No encontré datos para `{ticker}`.")
+        else: await msg.edit_text("⚠️ No encontré datos.")
 
-    # --- CASO 4: VIGILAR ---
     elif accion == "VIGILAR" and ticker:
         _, _, p = await motor_analisis(ticker, "SWING")
         cartera = cargar_cartera()
-        cartera.append({"ticker": ticker, "precio_compra": p, "fecha": str(datetime.now())})
+        cartera.append({"ticker": ticker, "precio_compra": p})
         guardar_cartera(cartera)
-        await update.message.reply_text(f"🛡️ **Vigilando {ticker}** desde ${p:.2f}")
+        await update.message.reply_text(f"🛡️ Vigilando {ticker}")
 
-    # --- DEFAULT ---
-    else:
-        await update.message.reply_text("👋 Soy tu Asesor Bursátil IA.\nDime 'Analiza Bitcoin' o 'Qué compro hoy'.")
+    else: await update.message.reply_text("👋 Soy tu Bot de Trading. Dime 'Analiza Bitcoin'.")
 
-# --- GUARDIÁN ---
 async def guardian_cartera(context: ContextTypes.DEFAULT_TYPE):
     cartera = cargar_cartera()
     if not cartera: return
-
     for item in cartera:
         await asyncio.sleep(2)
         ticker = item['ticker']
-        precio_orig = item['precio_compra']
-        
         _, _, precio_now = await motor_analisis(ticker, "SCALPING")
-        
-        if precio_now > 0:
-            cambio = (precio_now - precio_orig) / precio_orig
-            # Alerta si se mueve más de un 3%
-            if abs(cambio) > 0.03: 
+        if precio_now > 0 and Config.TELEGRAM_CHAT_ID:
+            cambio = (precio_now - item['precio_compra']) / item['precio_compra']
+            if abs(cambio) > 0.03:
                 emoji = "🚀" if cambio > 0 else "🔻"
-                try:
-                    # OJO: Necesitas definir TELEGRAM_CHAT_ID en Railway
-                    if Config.TELEGRAM_CHAT_ID:
-                        await context.bot.send_message(
-                            chat_id=Config.TELEGRAM_CHAT_ID,
-                            text=f"🚨 **ALERTA {ticker}**\n{emoji} Movimiento: {cambio*100:.1f}%\nPrecio: ${precio_now:.2f}",
-                            parse_mode=ParseMode.MARKDOWN
-                        )
-                except Exception as e:
-                    print(f"Error enviando alerta: {e}")
+                await context.bot.send_message(chat_id=Config.TELEGRAM_CHAT_ID, text=f"🚨 **ALERTA {ticker}**\n{emoji} Movimiento: {cambio*100:.1f}%")
 
 if __name__ == '__main__':
-    if not Config.TELEGRAM_TOKEN:
-        print("❌ Error: Falta TELEGRAM_TOKEN en las Variables de Railway")
-        exit()
-
+    if not Config.TELEGRAM_TOKEN: exit()
     app = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), manejar_mensaje_ia))
-    
-    # Trabajo en segundo plano (Guardián)
-    if app.job_queue:
-        app.job_queue.run_repeating(guardian_cartera, interval=900, first=30)
-    
-    print("🤖 BOT DEPLOYED & READY EN RAILWAY")
+    if app.job_queue: app.job_queue.run_repeating(guardian_cartera, interval=900, first=30)
+    print("🤖 BOT ACTIVO EN RAILWAY")
     app.run_polling()
