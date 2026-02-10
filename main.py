@@ -111,31 +111,50 @@ if Config.GROQ_API_KEY:
     try: client = OpenAI(api_key=Config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
     except: pass
 
+# --- DICCIONARIO INTELIGENTE ---
 SINONIMOS = {
-    "DOLAR": "COP=X", "USD": "COP=X", "EURO": "EURUSD=X",
+    # EMPRESAS / ACCIONES
+    "ROCKSTAR": "TTWO", "GTA": "TTWO", "TAKE TWO": "TTWO", "TTWO": "TTWO",
+    "TESLA": "TSLA", "NVIDIA": "NVDA", "APPLE": "AAPL", "GOOGLE": "GOOGL", "META": "META",
+    "AMAZON": "AMZN", "MICROSOFT": "MSFT", "NETFLIX": "NFLX",
+    
+    # ESTRATEGIAS PAÍSES (Shorts)
+    "CHINA": "YANG", "CONTRA CHINA": "YANG",
+    "EEUU": "SQQQ", "CONTRA EEUU": "SQQQ", "USA": "SQQQ",
+    
+    # FOREX / CRIPTO / COMMODITIES
+    "DOLAR": "COP=X", "USD": "COP=X", "PESO": "COP=X",
+    "EURO": "EURUSD=X",
     "BITCOIN": "BTC-USD", "BTC": "BTC-USD",
     "ETH": "ETH-USD", "ETHEREUM": "ETH-USD",
-    "ORO": "GLD", "GOLD": "GLD", "PLATA": "SLV",
-    "PETROLEO": "USO", "OIL": "USO",
-    "TESLA": "TSLA", "NVIDIA": "NVDA", "APPLE": "AAPL", "GOOGLE": "GOOGL", "META": "META",
-    "AMAZON": "AMZN", "MICROSOFT": "MSFT",
-    # --- CORRECCIÓN ROCKSTAR Y OTROS ---
-    "ROCKSTAR": "TTWO", "ROCKSTAR GAMES": "TTWO", "GTA": "TTWO", "TAKE TWO": "TTWO", "TTWO": "TTWO",
-    "CHINA": "YANG", "CONTRA CHINA": "YANG",
-    "EEUU": "SQQQ", "CONTRA EEUU": "SQQQ"
+    "ORO": "GLD", "GOLD": "GLD",
+    "PETROLEO": "USO", "OIL": "USO"
 }
 
 def normalizar_ticker(ticker):
+    """
+    Búsqueda Inteligente:
+    1. Busca coincidencia exacta.
+    2. Si falla, busca si alguna CLAVE está contenida en el texto del usuario.
+    """
     if not ticker: return None
     t = ticker.upper().strip()
-    # Limpieza de basura común en inputs
-    t = t.replace("ACCIONES DE ", "").replace("LA ACCION DE ", "")
-    return SINONIMOS.get(t, t)
+    
+    # 1. Búsqueda Exacta
+    if t in SINONIMOS:
+        return SINONIMOS[t]
+        
+    # 2. Búsqueda Difusa (El Sabueso)
+    # Ejemplo: Si t es "ROCKSTAR GAMES INC", encuentra que "ROCKSTAR" está dentro y devuelve "TTWO"
+    for clave, valor in SINONIMOS.items():
+        if clave in t: 
+            return valor
+            
+    return t
 
 def interpretar_intencion(msg):
     if not client: return {"accion": "CHARLA"}
     
-    # PROMPT ESTRATEGA: Pide Explicación
     prompt = f"""
     Analiza: "{msg}".
     
@@ -245,7 +264,7 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         tick = data.get("ticker")
         lst = data.get("lista_activos")
         est = data.get("estilo", "SCALPING")
-        explicacion = data.get("explicacion") # Recuperamos el "Por qué"
+        explicacion = data.get("explicacion")
         
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
     except: acc, est, explicacion = "CHARLA", "SCALPING", None
@@ -338,7 +357,7 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"🛡️ Vigilando {tick}")
 
     else:
-        await update.message.reply_text("👋 Soy tu Bot.\nPrueba: 'Apostar contra EEUU' o 'Analiza Rockstar Games'.")
+        await update.message.reply_text("👋 Soy tu Bot.\nPrueba: 'Apostar contra EEUU' o 'Analiza Rockstar'.")
 
 async def guardian_cartera(context: ContextTypes.DEFAULT_TYPE):
     c = cargar_cartera()
