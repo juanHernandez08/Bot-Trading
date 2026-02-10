@@ -87,7 +87,7 @@ async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
     UNIVERSO = {
         "FOREX": ['EURUSD=X', 'GBPUSD=X', 'JPY=X', 'COP=X', 'MXN=X'],
         "CRIPTO": ['BTC-USD', 'ETH-USD', 'SOL-USD', 'BNB-USD', 'XRP-USD'],
-        "ACCIONES": ['AAPL', 'TSLA', 'NVDA', 'AMZN', 'MSFT', 'GLD']
+        "ACCIONES": ['AAPL', 'TSLA', 'NVDA', 'AMZN', 'MSFT', 'GLD', 'TTWO']
     }
     lista = UNIVERSO.get(categoria, UNIVERSO["ACCIONES"][:4] + UNIVERSO["CRIPTO"][:2])
     inter, per = ("15m", "5d") if estilo == "SCALPING" else ("1d", "6mo")
@@ -118,28 +118,33 @@ SINONIMOS = {
     "ORO": "GLD", "GOLD": "GLD", "PLATA": "SLV",
     "PETROLEO": "USO", "OIL": "USO",
     "TESLA": "TSLA", "NVIDIA": "NVDA", "APPLE": "AAPL", "GOOGLE": "GOOGL", "META": "META",
-    "ROCKSTAR": "TTWO", "GTA": "TTWO", "TAKE TWO": "TTWO",
-    "AMAZON": "AMZN", "MICROSOFT": "MSFT"
+    "AMAZON": "AMZN", "MICROSOFT": "MSFT",
+    # --- CORRECCIÓN ROCKSTAR Y OTROS ---
+    "ROCKSTAR": "TTWO", "ROCKSTAR GAMES": "TTWO", "GTA": "TTWO", "TAKE TWO": "TTWO", "TTWO": "TTWO",
+    "CHINA": "YANG", "CONTRA CHINA": "YANG",
+    "EEUU": "SQQQ", "CONTRA EEUU": "SQQQ"
 }
 
 def normalizar_ticker(ticker):
     if not ticker: return None
     t = ticker.upper().strip()
+    # Limpieza de basura común en inputs
+    t = t.replace("ACCIONES DE ", "").replace("LA ACCION DE ", "")
     return SINONIMOS.get(t, t)
 
 def interpretar_intencion(msg):
     if not client: return {"accion": "CHARLA"}
     
-    # PROMPT MEJORADO: PIDE EL "POR QUÉ" (explicacion)
+    # PROMPT ESTRATEGA: Pide Explicación
     prompt = f"""
     Analiza: "{msg}".
     
     Reglas:
     1. Si no hay tiempo explícito, asume "SCALPING".
-    2. Si pide ESTRATEGIA ABSTRACTA (ej: "Apostar contra EEUU", "Crisis"):
+    2. Si pide ESTRATEGIA ABSTRACTA (ej: "Apostar contra China/EEUU", "Crisis"):
        -> accion="COMPARAR"
-       -> lista_activos=TICKERS REALES (ej: SQQQ, SPXU, GLD).
-       -> explicacion="Breve frase de por qué elegiste esos activos (ej: 'Son ETFs inversos que ganan cuando cae el S&P500')."
+       -> lista_activos=TICKERS REALES (ej: YANG, FXP para China; SQQQ, SPXU para EEUU).
+       -> explicacion="Frase breve explicando POR QUÉ (ej: 'YANG es un ETF inverso que sube cuando China cae')."
     3. JSON Only.
     
     JSON Schema: {{
@@ -185,7 +190,7 @@ async def motor_analisis(ticker, estilo="SCALPING"):
         df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
         if df is None or df.empty:
             if estilo == "SCALPING":
-                inv, per = "1d", "1y"
+                inv, per = "1d", "1y" 
                 df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
         
         if df is None or df.empty: return None, 0.0, 0.0, None
@@ -240,17 +245,16 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         tick = data.get("ticker")
         lst = data.get("lista_activos")
         est = data.get("estilo", "SCALPING")
-        explicacion = data.get("explicacion") # CAPTURAMOS LA EXPLICACIÓN
+        explicacion = data.get("explicacion") # Recuperamos el "Por qué"
         
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
     except: acc, est, explicacion = "CHARLA", "SCALPING", None
     
     # ---------------- CASO 1: COMPARACIÓN / ESTRATEGIA ----------------
     if acc == "COMPARAR" and lst:
-        titulo = "📊 **Estrategia**" if len(lst) > 3 else f"⚖️ **Comparando {len(lst)} activos**"
+        titulo = "📊 **Estrategia**" if explicacion else f"⚖️ **Comparando {len(lst)} activos**"
         msg = await update.message.reply_text(f"{titulo} ({est})...")
         
-        # INCLUIMOS LA EXPLICACIÓN AQUÍ
         reporte_final = f"{titulo} | {est}\n"
         if explicacion:
             reporte_final += f"💡 _{explicacion}_\n"
@@ -334,7 +338,7 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"🛡️ Vigilando {tick}")
 
     else:
-        await update.message.reply_text("👋 Soy tu Bot.\nPrueba: 'Apostar contra EEUU' o 'Analiza Rockstar'.")
+        await update.message.reply_text("👋 Soy tu Bot.\nPrueba: 'Apostar contra EEUU' o 'Analiza Rockstar Games'.")
 
 async def guardian_cartera(context: ContextTypes.DEFAULT_TYPE):
     c = cargar_cartera()
