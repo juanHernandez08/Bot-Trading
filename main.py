@@ -23,24 +23,14 @@ class Config:
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# --- 2. CEREBRO MATEMÁTICO (ROBUSTO) ---
+# --- 2. CEREBRO MATEMÁTICO ---
 def preparar_datos(df):
     df = df.copy()
-    # Corrección para yfinance nuevos formatos
-    if isinstance(df.columns, pd.MultiIndex): 
-        df.columns = df.columns.get_level_values(0)
-    
-    # Asegurar nombres de columnas
-    df.index.name = 'Date'
-    
-    # Limpieza numérica forzada
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     for col in ['Close', 'High', 'Low', 'Open']:
-        if col in df.columns: 
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-    
+        if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
     df.ffill(inplace=True)
 
-    # Indicadores
     try:
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -70,11 +60,8 @@ def preparar_datos(df):
         df['Volatilidad'] = df['Close'].rolling(20).std()
         df['SMA_50'] = df['Close'].rolling(50).mean()
         
-        # Dropna menos agresivo
         return df.dropna(subset=['RSI', 'Close'])
-    except Exception as e:
-        print(f"Error calculando indicadores: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 class Predictor:
     def __init__(self):
@@ -98,16 +85,11 @@ class Predictor:
 
 # --- 3. DICCIONARIOS ---
 SINONIMOS = {
-    # EMPRESAS
     "ROCKSTAR": "TTWO", "GTA": "TTWO", "TAKE TWO": "TTWO", "TTWO": "TTWO", "ROCKSTAR GAMES": "TTWO",
     "TESLA": "TSLA", "NVIDIA": "NVDA", "APPLE": "AAPL", "GOOGLE": "GOOGL", "META": "META",
     "AMAZON": "AMZN", "MICROSOFT": "MSFT", "NETFLIX": "NFLX",
-    
-    # ESTRATEGIAS
     "CHINA": "YANG", "CONTRA CHINA": "YANG",
     "EEUU": "SQQQ", "CONTRA EEUU": "SQQQ", "USA": "SQQQ",
-    
-    # ACTIVOS
     "DOLAR": "COP=X", "USD": "COP=X", "PESO": "COP=X",
     "EURO": "EURUSD=X", "EUR": "EURUSD=X",
     "BITCOIN": "BTC-USD", "BTC": "BTC-USD",
@@ -132,7 +114,6 @@ async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
     }
     lista = UNIVERSO.get(categoria, UNIVERSO["GENERAL"])
     inter, per = ("15m", "5d") if estilo == "SCALPING" else ("1d", "6mo")
-    
     try:
         df = yf.download(lista, period=per, interval=inter, progress=False, auto_adjust=True)['Close']
         if isinstance(df, pd.Series): df = df.to_frame()
@@ -146,7 +127,7 @@ async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
         return cands[:5]
     except: return lista[:3]
 
-# --- 5. INTELIGENCIA (IA) ---
+# --- 5. INTELIGENCIA ---
 client = None
 if Config.GROQ_API_KEY:
     try: client = OpenAI(api_key=Config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
@@ -189,29 +170,24 @@ def generar_resumen_breve(datos_txt, prob):
         return resp.choices[0].message.content.replace('"', '')
     except: return "Mercado volátil."
 
-# --- 6. MOTOR ANALÍTICO (CON RESCATE) ---
+# --- 6. MOTOR ANALÍTICO ---
 async def motor_analisis(ticker, estilo="SCALPING"):
     await asyncio.sleep(0.5) 
-    if not estilo: estilo = "SCALPING"
-    inv, per = ("1d", "1y") if estilo == "SWING" else ("15m", "5d")
     
-    # MODO RESCATE ACTIVADO
+    # SEGURIDAD DE ESTILO
+    if not estilo: estilo = "SCALPING"
+
+    inv, per = ("1d", "1y") if estilo == "SWING" else ("15m", "5d")
     backup_mode = False
 
     try:
-        # Intento 1: Descarga Normal
         df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
-        
-        # Si falla o está vacío -> Intento 2: Backup Diario
         if df is None or df.empty or len(df) < 5:
-            print(f"⚠️ {ticker} sin datos {inv}. Cambiando a Diario...")
             inv, per = "1d", "1y"
             df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
             backup_mode = True
         
-        # Si sigue vacío -> Muerte definitiva
-        if df is None or df.empty or len(df) < 5: 
-            return None, 0.0, 0.0, None
+        if df is None or df.empty or len(df) < 5: return None, 0.0, 0.0, None
         
         clean = preparar_datos(df)
         if clean.empty: return None, 0.0, 0.0, None
@@ -239,13 +215,10 @@ async def motor_analisis(ticker, estilo="SCALPING"):
             "señal": señal,
             "icono": icono,
             "ticker": ticker,
-            "backup": backup_mode # Avisamos si usamos backup
+            "backup": backup_mode
         }
-        
         return info, prob, row['Close'], clean
-    except Exception as e:
-        print(f"Error CRITICO en {ticker}: {e}")
-        return None, 0.0, 0.0, None
+    except: return None, 0.0, 0.0, None
 
 # --- 7. CONTROLADOR ---
 ARCHIVO_CARTERA = 'cartera.json'
@@ -262,13 +235,21 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     try:
         data = interpretar_intencion(texto)
-        acc, tick, lst, est, cat, explicacion = (
-            data.get("accion", "CHARLA"), data.get("ticker"), 
-            data.get("lista_activos"), data.get("estilo", "SCALPING"),
-            data.get("categoria", "GENERAL"), data.get("explicacion")
-        )
+        
+        # EXTRACCIÓN SEGURA DE DATOS
+        acc = data.get("accion", "CHARLA")
+        tick = data.get("ticker")
+        lst = data.get("lista_activos")
+        est = data.get("estilo") # Ojo: puede venir None
+        cat = data.get("categoria", "GENERAL")
+        explicacion = data.get("explicacion")
+        
+        # --- PARCHE DE SEGURIDAD PARA EL ERROR DEL UPPER() ---
+        if not est: est = "SCALPING"
+        # ---------------------------------------------------
+
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
-    except: acc = "CHARLA"
+    except: acc, est, cat, explicacion = "CHARLA", "SCALPING", "GENERAL", None
     
     if acc == "COMPARAR" and lst:
         titulo = "📊 **Estrategia**" if explicacion else "⚖️ **Comparando**"
@@ -282,7 +263,6 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 found = True
                 modo = " (Diario ⚠️)" if info['backup'] else ""
                 reporte += f"💎 **{info['ticker']}**{modo}\n💰 ${info['precio']} | {info['icono']} ({prob*100:.0f}%)\n🎯 TP: ${info['tp']} | ⛔ SL: ${info['sl']}\n〰〰〰〰〰〰〰〰〰\n"
-        
         await msg.delete()
         if found: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
         else: await update.message.reply_text("❌ Sin datos.")
@@ -306,7 +286,7 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         info, prob, _, _ = await motor_analisis(tick, est)
         if info:
             resumen = generar_resumen_breve(f"RSI:{info['rsi']}, Prob:{prob:.2f}", prob)
-            aviso_modo = " | ⚠️ MODO DIARIO (Sin datos 15m)" if info['backup'] else f" | {est.upper()}"
+            aviso_modo = " | ⚠️ MODO DIARIO" if info['backup'] else f" | {est.upper()}"
             tarjeta = (
                 f"💎 **{info['ticker']}**{aviso_modo}\n"
                 f"💵 **Precio:** `${info['precio']}`\n"
@@ -321,7 +301,7 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             await msg.delete()
             await update.message.reply_text(tarjeta, parse_mode=ParseMode.MARKDOWN)
-        else: await msg.edit_text(f"⚠️ No pude leer datos de {tick} (Ni en 15m ni Diario).")
+        else: await msg.edit_text(f"⚠️ No pude leer datos de {tick}.")
 
     elif acc == "VIGILAR" and tick:
         _, _, p, _ = await motor_analisis(tick, "SWING")
@@ -348,5 +328,5 @@ if __name__ == '__main__':
     app = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), manejar_mensaje_ia))
     if app.job_queue: app.job_queue.run_repeating(guardian_cartera, interval=900, first=30)
-    print("🤖 BOT BLINDADO ACTIVO")
+    print("🤖 BOT BLINDADO V2 ACTIVO")
     app.run_polling()
