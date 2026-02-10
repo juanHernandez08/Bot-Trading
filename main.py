@@ -52,7 +52,6 @@ def preparar_datos(df):
     atr = df['ATR'].iloc[-1]
     if pd.isna(atr): atr = df['Close'].iloc[-1] * 0.01
     
-    # Estrategia 1.5:3
     df['Stop_Loss'] = df['Close'] - (atr * 1.5)
     df['Take_Profit'] = df['Close'] + (atr * 3.0)
     
@@ -110,26 +109,56 @@ if Config.GROQ_API_KEY:
     try: client = OpenAI(api_key=Config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
     except: pass
 
+# --- DICCIONARIO DE CORRECCIÓN (LO NUEVO) ---
+SINONIMOS = {
+    "DOLAR": "COP=X",
+    "DÓLAR": "COP=X",
+    "USD": "COP=X",
+    "EURO": "EURUSD=X",
+    "BITCOIN": "BTC-USD",
+    "BTC": "BTC-USD",
+    "ETH": "ETH-USD",
+    "ETHEREUM": "ETH-USD",
+    "SOL": "SOL-USD",
+    "ORO": "GLD",
+    "PETROLEO": "USO"
+}
+
+def normalizar_ticker(ticker):
+    if not ticker: return None
+    t = ticker.upper().strip()
+    return SINONIMOS.get(t, t)
+
 def interpretar_intencion(msg):
     if not client: return {"accion": "CHARLA"}
     prompt = f"""Analiza: "{msg}". Regla: Si no hay tiempo, asume SCALPING.
     JSON: {{"accion": "ANALIZAR"|"COMPARAR"|"RECOMENDAR"|"VIGILAR"|"CHARLA", "ticker": "SIMBOLO"|null, "lista_activos": ["A"]|null, "estilo": "SCALPING"|"SWING"}}"""
     try:
         resp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user", "content":prompt}, {"role":"system", "content":"JSON only"}])
-        return json.loads(re.search(r"\{.*\}", resp.choices[0].message.content, re.DOTALL).group(0))
+        data = json.loads(re.search(r"\{.*\}", resp.choices[0].message.content, re.DOTALL).group(0))
+        
+        # APLICAR CORRECCIÓN
+        if data.get("ticker"): data["ticker"] = normalizar_ticker(data["ticker"])
+        if data.get("lista_activos"): data["lista_activos"] = [normalizar_ticker(t) for t in data["lista_activos"]]
+        
+        return data
     except: return {"accion":"CHARLA"}
 
-def generar_resumen_breve(datos_txt):
-    """Genera una frase de max 15 palabras explicando la señal."""
-    if not client: return "Análisis técnico basado en RSI y Tendencia."
+def generar_resumen_breve(datos_txt, prob):
+    """Genera frase condicionada a la probabilidad matemática."""
+    if not client: return "Análisis técnico estándar."
+    
+    # Instrucción de seguridad: Si probabilidad es baja, PROHIBIDO recomendar entrar.
+    seguridad = "ADVERTENCIA: La probabilidad es BAJA (<40%). NO RECOMIENDES ENTRAR. Sugiere esperar o vender." if prob < 0.4 else "Probabilidad favorable."
+    
     try:
         resp = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role":"system", "content":"Eres un experto en Trading. Responde en Español."},
-                {"role":"user", "content":f"Basado en estos datos: {datos_txt}. Escribe UNA SOLA FRASE de máximo 15 palabras explicando por qué entrar o salir. Sé directo."}
+                {"role":"user", "content":f"Datos: {datos_txt}. {seguridad}. Escribe UNA SOLA FRASE de máximo 15 palabras explicando la decisión."}
             ],
-            max_tokens=40
+            max_tokens=45
         )
         return resp.choices[0].message.content.replace('"', '')
     except: return "Mercado volátil, precaución."
@@ -181,18 +210,19 @@ async def motor_analisis(ticker, estilo="SCALPING"):
         
         row = clean.iloc[-1]
         
-        # --- PREPARAR DATOS PARA LA TARJETA ---
         if prob > 0.60: señal, icono = "FUERTE ALCISTA", "🟢🔥"
         elif prob > 0.50: señal, icono = "MODERADA ALCISTA", "🟢"
         else: señal, icono = "NEUTRAL / BAJISTA", "⚪⚠️"
 
+        # Ajuste de decimales según el precio
         fmt = ",.4f" if row['Close'] < 50 else ",.2f"
-        
-        # Generar mini-resumen con IA
-        contexto_ia = f"RSI:{row['RSI']:.1f}, Prob:{prob:.2f}, Tendencia:{señal}"
-        resumen = generar_resumen_breve(contexto_ia)
+        # Caso especial para COP (Pesos) que no usa decimales
+        if "COP" in ticker: fmt = ",.0f"
 
-        # --- TARJETA DE FRANCOTIRADOR V2 ---
+        # Generar resumen con la probabilidad en mente
+        contexto_ia = f"RSI:{row['RSI']:.1f}, Prob:{prob:.2f}, Tendencia:{señal}"
+        resumen = generar_resumen_breve(contexto_ia, prob)
+
         tarjeta = (
             f"💎 **{ticker}** | {estilo.upper()}\n"
             f"💵 **Precio:** `${format(row['Close'], fmt)}`\n"
