@@ -3,21 +3,36 @@ import json
 import os
 import asyncio
 from datetime import datetime
+from dotenv import load_dotenv # Asegúrate de que esto esté aquí
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 import yfinance as yf 
 
-# --- TUS MÓDULOS ---
-from config.settings import Config
-from src.features import preparar_datos
-from src.model_handler import Predictor
-from src.scanner import escanear_mercado_real
-from src.brain import (
-    interpretar_intencion, 
-    generar_respuesta_natural, 
-    generar_recomendacion_mercado
-)
+# --- CARGAR VARIABLES DE ENTORNO ---
+load_dotenv() # Esto lee el archivo .env en tu PC (y Railway usa sus Variables propias)
+
+# --- CLASE DE CONFIGURACIÓN (INTEGRADA AQUÍ MISMO) ---
+class Config:
+    TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+# --- TUS MÓDULOS (SRC SÍ DEBE ESTAR SUBIDO) ---
+# Si src/ tampoco se subió, avísame, pero probemos arreglando config primero.
+try:
+    from src.features import preparar_datos
+    from src.model_handler import Predictor
+    from src.scanner import escanear_mercado_real
+    from src.brain import (
+        interpretar_intencion, 
+        generar_respuesta_natural, 
+        generar_recomendacion_mercado
+    )
+except ImportError as e:
+    print(f"❌ ERROR CRÍTICO IMPORTANDO SRC: {e}")
+    print("Asegúrate de que la carpeta 'src' y sus archivos (__init__.py, brain.py, etc.) estén en GitHub.")
+    exit()
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -32,33 +47,39 @@ NOMBRES_ACTIVOS = {
     'NVDA': 'NVIDIA',
     'AMZN': 'Amazon'
 }
+
 def obtener_nombre_bonito(ticker):
     return f"{NOMBRES_ACTIVOS.get(ticker, ticker)} ({ticker})"
 
-# --- CARTERA ---
+# --- CARTERA (DATABASE SIMPLE) ---
 ARCHIVO_CARTERA = 'cartera.json'
+
 def cargar_cartera():
     try:
+        if not os.path.exists(ARCHIVO_CARTERA): return []
         with open(ARCHIVO_CARTERA, 'r') as f: return json.load(f)
     except: return []
+
 def guardar_cartera(datos):
-    with open(ARCHIVO_CARTERA, 'w') as f: json.dump(datos, f)
+    try:
+        with open(ARCHIVO_CARTERA, 'w') as f: json.dump(datos, f)
+    except Exception as e:
+        print(f"Error guardando cartera: {e}")
 
 # --- MOTOR DE ANÁLISIS ---
-# EN MAIN.PY - REEMPLAZAR LA FUNCIÓN motor_analisis
-
 async def motor_analisis(ticker, estilo="SCALPING"):
     await asyncio.sleep(1) 
     
     if estilo == "SWING":
         intervalo, periodo, tipo = "1d", "1y", "Swing"
     else:
-        intervalo, periodo, tipo = "15m", "5d", "Scalping" # Aumentamos buffer
+        intervalo, periodo, tipo = "15m", "5d", "Scalping"
 
     try:
-        # Forzamos descarga de datos planos
+        # Auto-adjust=True ayuda a limpiar datos raros de Yahoo
         df = yf.download(ticker, period=periodo, interval=intervalo, progress=False, auto_adjust=True)
         
+        # Fallback (Respaldo) si 15m falla
         if df is None or df.empty:
             if estilo == "SCALPING":
                 print(f"⚠️ {ticker}: Sin datos 15m. Backup Diario...")
@@ -66,7 +87,7 @@ async def motor_analisis(ticker, estilo="SCALPING"):
                 df = yf.download(ticker, period=periodo, interval=intervalo, progress=False, auto_adjust=True)
 
     except Exception as e:
-        print(f"Error DL {ticker}: {e}")
+        print(f"Error descarga {ticker}: {e}")
         return None, 0.0, 0.0
 
     if df is None or df.empty: return None, 0.0, 0.0
@@ -74,53 +95,47 @@ async def motor_analisis(ticker, estilo="SCALPING"):
     try:
         clean_data = preparar_datos(df)
         
-        # Necesitamos al menos 1 fila
-        if clean_data.empty: 
-            print(f"⚠️ {ticker}: Datos insuficientes tras limpieza.")
-            return None, 0.0, 0.0
+        if clean_data.empty: return None, 0.0, 0.0
 
-        # --- SEPARAR DATOS ---
-        # 1. Datos para ENTRENAR (Todo menos la última fila, porque necesitamos Target real)
+        # Separar entrenamiento (pasado) de predicción (presente)
         data_train = clean_data.iloc[:-1] 
-        
-        # 2. Dato para PREDECIR (La última fila, es la vela actual)
         ultimo_dato = clean_data.iloc[[-1]]
 
         prob = 0.5
-        # Solo entrenamos si hay suficientes datos históricos
         if len(data_train) > 10:
             cerebro = Predictor()
             cerebro.entrenar(data_train)
-            _, prob = cerebro.predecir_mañana(clean_data) # Predice sobre el set completo
+            _, prob = cerebro.predecir_mañana(clean_data)
         
-        # Extraer info de la vela ACTUAL
+        # Datos de la vela actual
         fila_actual = ultimo_dato.iloc[0]
         precio = fila_actual['Close']
         stop_loss = fila_actual['Stop_Loss']
         take_profit = fila_actual['Take_Profit']
         rsi = fila_actual['RSI']
         
+        # Formato decimales
+        fmt = ".4f" if precio < 50 else ".2f"
+
         datos_txt = (
             f"MODO: {tipo}\n"
             f"ACTIVO: {ticker}\n"
-            f"PRECIO: ${precio:.4f}\n" # 4 decimales para Forex
+            f"PRECIO: ${format(precio, fmt)}\n" 
             f"RSI: {rsi:.1f}\n"
-            f"⛔ STOP LOSS: ${stop_loss:.4f}\n"
-            f"🎯 TAKE PROFIT: ${take_profit:.4f}\n"
+            f"⛔ STOP LOSS: ${format(stop_loss, fmt)}\n"
+            f"🎯 TAKE PROFIT: ${format(take_profit, fmt)}\n"
             f"PROBABILIDAD SUBIDA: {prob*100:.1f}%\n"
         )
-        
         return datos_txt, prob, precio
 
     except Exception as e:
         print(f"Error procesando {ticker}: {e}")
-        import traceback
-        traceback.print_exc() # Para ver el error real en consola
         return None, 0.0, 0.0
 
 # --- CONTROLADOR ---
 async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
+    # Enviar acción "escribiendo..."
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
     
     try:
@@ -131,23 +146,20 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         categoria = ment.get("categoria", "GENERAL")
         estilo = ment.get("estilo", "SCALPING")
         
-        # --- PARCHE DE LÓGICA ---
-        # Si dice ANALIZAR pero no hay ticker ni lista, es RECOMENDAR
         if accion == "ANALIZAR" and not ticker and not lista:
             accion = "RECOMENDAR"
             
     except:
         accion, estilo = "CHARLA", "SCALPING"
     
-    print(f"🧠 {accion} | {ticker or lista} | {estilo}")
+    print(f"🧠 {accion} | {ticker or lista}")
 
-    # --- CASO 1: COMPARAR VARIOS ---
+    # --- CASO 1: COMPARAR ---
     if accion == "COMPARAR" and lista:
         msg = await update.message.reply_text(f"⚖️ **Comparando {len(lista)} activos...**")
         reporte = ""
-        
         for t in lista:
-            await asyncio.sleep(1)
+            await asyncio.sleep(1) # Evitar ban de Yahoo
             txt, prob, precio = await motor_analisis(t, estilo)
             if txt:
                 emoji = "🏆" if prob > 0.6 else "⚠️"
@@ -158,21 +170,21 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
             final = generar_recomendacion_mercado(reporte, "COMPARATIVA")
             await update.message.reply_text(final, parse_mode=ParseMode.MARKDOWN)
         else:
-            await update.message.reply_text("❌ No pude obtener datos de esos activos.")
+            await update.message.reply_text("❌ No pude obtener datos.")
 
-    # --- CASO 2: RECOMENDAR (ESCÁNER) ---
+    # --- CASO 2: RECOMENDAR ---
     elif accion == "RECOMENDAR":
         msg = await update.message.reply_text(f"🔎 **Escaneando {categoria} ({estilo})...**")
         candidatos = await escanear_mercado_real(categoria, estilo)
         
         if not candidatos:
-            await msg.edit_text("💤 Mercado lento, sin volatilidad clara.")
+            await msg.edit_text("💤 Mercado lento.")
             return
 
         reporte = ""
         for i, t in enumerate(candidatos):
             txt, prob, precio = await motor_analisis(t, estilo)
-            # Barra visual
+            # Actualizar mensaje cada 2 activos para que el usuario vea progreso
             if i % 2 == 0:
                 try: await msg.edit_text(f"⏳ Analizando {t}...") 
                 except: pass
@@ -186,11 +198,11 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
             resp = generar_recomendacion_mercado(reporte, estilo)
             await update.message.reply_text(resp, parse_mode=ParseMode.MARKDOWN)
         else:
-            await update.message.reply_text("📉 Analicé los más movidos, pero ninguno da señal de compra fuerte.")
+            await update.message.reply_text("📉 Nada interesante ahora.")
 
-    # --- CASO 3: ANALIZAR UNO SOLO ---
+    # --- CASO 3: ANALIZAR UNO ---
     elif accion == "ANALIZAR" and ticker:
-        msg = await update.message.reply_text(f"🔎 Analizando **{ticker}** ({estilo})...")
+        msg = await update.message.reply_text(f"🔎 Analizando **{ticker}**...")
         txt, prob, precio = await motor_analisis(ticker, estilo)
         if txt:
             resp = generar_respuesta_natural(txt, texto)
@@ -207,18 +219,9 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         guardar_cartera(cartera)
         await update.message.reply_text(f"🛡️ **Vigilando {ticker}** desde ${p:.2f}")
 
-    # --- OTROS ---
+    # --- DEFAULT ---
     else:
-        await update.message.reply_text(
-            "👋 **Bot Trading Activo**\n"
-            "Modo actual: **Scalping (15 min)** ⚡\n\n"
-            "Comandos:\n"
-            "🔹 _'Qué compro hoy?'_ (Escáner General)\n"
-            "🔹 _'Recomienda Criptos'_ (Escáner Cripto)\n"
-            "🔹 _'Compara Bitcoin, Oro y Tesla'_ (Comparativa)\n"
-            "🔹 _'Analiza Apple'_ (Análisis Individual)", 
-            parse_mode=ParseMode.MARKDOWN
-        )
+        await update.message.reply_text("👋 Soy tu Asesor Bursátil IA.\nDime 'Analiza Bitcoin' o 'Qué compro hoy'.")
 
 # --- GUARDIÁN ---
 async def guardian_cartera(context: ContextTypes.DEFAULT_TYPE):
@@ -234,24 +237,31 @@ async def guardian_cartera(context: ContextTypes.DEFAULT_TYPE):
         
         if precio_now > 0:
             cambio = (precio_now - precio_orig) / precio_orig
+            # Alerta si se mueve más de un 3%
             if abs(cambio) > 0.03: 
                 emoji = "🚀" if cambio > 0 else "🔻"
-                await context.bot.send_message(
-                    chat_id=Config.TELEGRAM_CHAT_ID,
-                    text=f"🚨 **ALERTA {ticker}**\n{emoji} Movimiento: {cambio*100:.1f}%\nPrecio: ${precio_now:.2f}",
-                    parse_mode=ParseMode.MARKDOWN
-                )
+                try:
+                    # OJO: Necesitas definir TELEGRAM_CHAT_ID en Railway
+                    if Config.TELEGRAM_CHAT_ID:
+                        await context.bot.send_message(
+                            chat_id=Config.TELEGRAM_CHAT_ID,
+                            text=f"🚨 **ALERTA {ticker}**\n{emoji} Movimiento: {cambio*100:.1f}%\nPrecio: ${precio_now:.2f}",
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                except Exception as e:
+                    print(f"Error enviando alerta: {e}")
 
 if __name__ == '__main__':
     if not Config.TELEGRAM_TOKEN:
-        print("❌ Error: Falta TELEGRAM_TOKEN en .env")
+        print("❌ Error: Falta TELEGRAM_TOKEN en las Variables de Railway")
         exit()
 
     app = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), manejar_mensaje_ia))
     
+    # Trabajo en segundo plano (Guardián)
     if app.job_queue:
-        app.job_queue.run_repeating(guardian_cartera, interval=900, first=10)
+        app.job_queue.run_repeating(guardian_cartera, interval=900, first=30)
     
-    print("🤖 BOT MODO BURSÁTIL ACTIVO")
+    print("🤖 BOT DEPLOYED & READY EN RAILWAY")
     app.run_polling()
