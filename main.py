@@ -23,43 +23,58 @@ class Config:
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# --- 2. CEREBRO MATEMÁTICO ---
+# --- 2. CEREBRO MATEMÁTICO (ROBUSTO) ---
 def preparar_datos(df):
     df = df.copy()
-    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+    # Corrección para yfinance nuevos formatos
+    if isinstance(df.columns, pd.MultiIndex): 
+        df.columns = df.columns.get_level_values(0)
+    
+    # Asegurar nombres de columnas
+    df.index.name = 'Date'
+    
+    # Limpieza numérica forzada
     for col in ['Close', 'High', 'Low', 'Open']:
-        if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
+        if col in df.columns: 
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
     df.ffill(inplace=True)
 
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    df['EMA_12'] = df['Close'].ewm(span=12).mean()
-    df['EMA_26'] = df['Close'].ewm(span=26).mean()
-    df['MACD'] = df['EMA_12'] - df['EMA_26']
-    df['Signal'] = df['MACD'].ewm(span=9).mean()
-    
-    ranges = pd.concat([
-        df['High'] - df['Low'],
-        (df['High'] - df['Close'].shift()).abs(),
-        (df['Low'] - df['Close'].shift()).abs()
-    ], axis=1)
-    df['ATR'] = ranges.max(axis=1).rolling(14).mean().bfill()
-    
-    atr = df['ATR'].iloc[-1]
-    if pd.isna(atr): atr = df['Close'].iloc[-1] * 0.01
-    
-    df['Stop_Loss'] = df['Close'] - (atr * 1.5)
-    df['Take_Profit'] = df['Close'] + (atr * 3.0)
-    
-    df['Target'] = (df['Close'].shift(-1) > df['Close']).astype(int)
-    df['Volatilidad'] = df['Close'].rolling(20).std()
-    df['SMA_50'] = df['Close'].rolling(50).mean()
-    
-    return df.dropna(subset=['RSI', 'MACD', 'SMA_50'])
+    # Indicadores
+    try:
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+        
+        df['EMA_12'] = df['Close'].ewm(span=12).mean()
+        df['EMA_26'] = df['Close'].ewm(span=26).mean()
+        df['MACD'] = df['EMA_12'] - df['EMA_26']
+        df['Signal'] = df['MACD'].ewm(span=9).mean()
+        
+        ranges = pd.concat([
+            df['High'] - df['Low'],
+            (df['High'] - df['Close'].shift()).abs(),
+            (df['Low'] - df['Close'].shift()).abs()
+        ], axis=1)
+        df['ATR'] = ranges.max(axis=1).rolling(14).mean().bfill()
+        
+        atr = df['ATR'].iloc[-1]
+        if pd.isna(atr): atr = df['Close'].iloc[-1] * 0.01
+        
+        df['Stop_Loss'] = df['Close'] - (atr * 1.5)
+        df['Take_Profit'] = df['Close'] + (atr * 3.0)
+        
+        df['Target'] = (df['Close'].shift(-1) > df['Close']).astype(int)
+        df['Volatilidad'] = df['Close'].rolling(20).std()
+        df['SMA_50'] = df['Close'].rolling(50).mean()
+        
+        # Dropna menos agresivo
+        return df.dropna(subset=['RSI', 'Close'])
+    except Exception as e:
+        print(f"Error calculando indicadores: {e}")
+        return pd.DataFrame()
 
 class Predictor:
     def __init__(self):
@@ -81,75 +96,57 @@ class Predictor:
             return self.model.predict(data[cols].iloc[[-1]])[0], self.model.predict_proba(data[cols].iloc[[-1]])[0][1]
         except: return 0, 0.5
 
-# --- 3. DICCIONARIOS Y LÓGICA DE NOMBRES ---
+# --- 3. DICCIONARIOS ---
 SINONIMOS = {
     # EMPRESAS
-    "ROCKSTAR": "TTWO", "GTA": "TTWO", "TAKE TWO": "TTWO", "TTWO": "TTWO",
+    "ROCKSTAR": "TTWO", "GTA": "TTWO", "TAKE TWO": "TTWO", "TTWO": "TTWO", "ROCKSTAR GAMES": "TTWO",
     "TESLA": "TSLA", "NVIDIA": "NVDA", "APPLE": "AAPL", "GOOGLE": "GOOGL", "META": "META",
     "AMAZON": "AMZN", "MICROSOFT": "MSFT", "NETFLIX": "NFLX",
     
-    # ESTRATEGIAS / PAISES
+    # ESTRATEGIAS
     "CHINA": "YANG", "CONTRA CHINA": "YANG",
     "EEUU": "SQQQ", "CONTRA EEUU": "SQQQ", "USA": "SQQQ",
     
-    # DIVISAS / COMMODITIES
+    # ACTIVOS
     "DOLAR": "COP=X", "USD": "COP=X", "PESO": "COP=X",
     "EURO": "EURUSD=X", "EUR": "EURUSD=X",
     "BITCOIN": "BTC-USD", "BTC": "BTC-USD",
     "ETH": "ETH-USD", "ETHEREUM": "ETH-USD",
-    "ORO": "GLD", "GOLD": "GLD",
-    "PETROLEO": "USO", "OIL": "USO"
+    "ORO": "GLD", "GOLD": "GLD"
 }
 
 def normalizar_ticker(ticker):
-    """
-    Busca si alguna clave del diccionario está DENTRO del texto del usuario.
-    Ej: "Rockstar Games" -> Contiene "ROCKSTAR" -> Devuelve "TTWO"
-    """
     if not ticker: return None
     t = ticker.upper().strip()
-    
-    # Búsqueda inversa (Sabueso)
     for clave, valor in SINONIMOS.items():
-        if clave in t: # ¿La palabra clave está en lo que escribió el usuario?
-            return valor
-            
-    # Si no encuentra nada, devuelve el texto limpio
+        if clave in t: return valor
     return t.replace(" ", "")
 
 # --- 4. ESCÁNER ---
 async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
-    # DEFINICIÓN DE LISTAS POR CATEGORÍA
     UNIVERSO = {
-        "FOREX": ['EURUSD=X', 'GBPUSD=X', 'JPY=X', 'COP=X', 'MXN=X', 'AUDUSD=X'],
-        "CRIPTO": ['BTC-USD', 'ETH-USD', 'SOL-USD', 'BNB-USD', 'XRP-USD', 'DOGE-USD'],
-        "ACCIONES": ['AAPL', 'TSLA', 'NVDA', 'AMZN', 'MSFT', 'GLD', 'TTWO', 'AMD', 'GOOGL'],
-        "GENERAL": ['AAPL', 'BTC-USD', 'EURUSD=X', 'GLD', 'NVDA'] # Mix por defecto
+        "FOREX": ['EURUSD=X', 'GBPUSD=X', 'JPY=X', 'COP=X', 'MXN=X'],
+        "CRIPTO": ['BTC-USD', 'ETH-USD', 'SOL-USD', 'BNB-USD', 'XRP-USD'],
+        "ACCIONES": ['AAPL', 'TSLA', 'NVDA', 'AMZN', 'MSFT', 'GLD', 'TTWO', 'AMD'],
+        "GENERAL": ['AAPL', 'BTC-USD', 'EURUSD=X', 'GLD', 'NVDA']
     }
-    
-    # Seleccionar la lista correcta
     lista = UNIVERSO.get(categoria, UNIVERSO["GENERAL"])
-    
-    # Configuración de tiempo
     inter, per = ("15m", "5d") if estilo == "SCALPING" else ("1d", "6mo")
     
     try:
         df = yf.download(lista, period=per, interval=inter, progress=False, auto_adjust=True)['Close']
         if isinstance(df, pd.Series): df = df.to_frame()
-        
         cands = []
         for t in lista:
             if t in df.columns:
                 p = df[t].dropna()
                 if len(p) > 5:
-                    # Filtro de volatilidad mínima para que valga la pena
                     vol = abs((p.iloc[-1] - p.iloc[-4])/p.iloc[-4])
-                    if vol > 0.001: 
-                        cands.append(t)
+                    if vol > 0.001: cands.append(t)
         return cands[:5]
     except: return lista[:3]
 
-# --- 5. INTELIGENCIA ARTIFICIAL (IA) ---
+# --- 5. INTELIGENCIA (IA) ---
 client = None
 if Config.GROQ_API_KEY:
     try: client = OpenAI(api_key=Config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
@@ -157,15 +154,11 @@ if Config.GROQ_API_KEY:
 
 def interpretar_intencion(msg):
     if not client: return {"accion": "CHARLA"}
-    
-    # PROMPT MAESTRO: AHORA CLASIFICA CATEGORÍAS
     prompt = f"""
     Analiza: "{msg}".
-    
-    Instrucciones:
-    1. CATEGORIA: Si pide "divisas/monedas" -> "FOREX". Si "acciones/empresas" -> "ACCIONES". Si "cripto" -> "CRIPTO". Si no sabe -> "GENERAL".
-    2. ESTRATEGIA: Si pide apostar contra un país/crisis -> accion="COMPARAR", lista_activos=[TICKERS REALES ej: SQQQ, YANG], explicacion="Por qué".
-    3. ROCKSTAR: Si menciona "Rockstar" -> ticker="TTWO".
+    1. CATEGORIA: "FOREX" (divisas), "ACCIONES" (empresas), "CRIPTO" (monedas), "GENERAL".
+    2. ESTRATEGIA: Si pide contra pais/crisis -> accion="COMPARAR", lista_activos=[TICKERS REALES], explicacion="Texto".
+    3. ROCKSTAR -> ticker="TTWO".
     
     JSON Schema: {{
         "accion": "ANALIZAR"|"COMPARAR"|"RECOMENDAR"|"VIGILAR"|"CHARLA", 
@@ -173,49 +166,52 @@ def interpretar_intencion(msg):
         "lista_activos": ["A", "B"]|null, 
         "estilo": "SCALPING"|"SWING",
         "categoria": "GENERAL"|"FOREX"|"ACCIONES"|"CRIPTO",
-        "explicacion": "Texto breve"|null
+        "explicacion": "Texto"|null
     }}
     """
     try:
         resp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user", "content":prompt}, {"role":"system", "content":"JSON only"}])
         data = json.loads(re.search(r"\{.*\}", resp.choices[0].message.content, re.DOTALL).group(0))
-        
-        # Limpieza de Tickers
         if data.get("ticker"): data["ticker"] = normalizar_ticker(data["ticker"])
         if data.get("lista_activos"): data["lista_activos"] = [normalizar_ticker(t) for t in data["lista_activos"]]
-        
         return data
     except: return {"accion":"CHARLA", "categoria": "GENERAL"}
 
 def generar_resumen_breve(datos_txt, prob):
     if not client: return "Análisis técnico estándar."
-    seguridad = "ADVERTENCIA: Probabilidad BAJA. Sugiere esperar." if prob < 0.45 else "Probabilidad favorable."
+    seguridad = "ADVERTENCIA: Prob BAJA. Esperar." if prob < 0.45 else "Prob favorable."
     try:
         resp = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
-                {"role":"system", "content":"Experto en Trading. Español."},
-                {"role":"user", "content":f"Datos: {datos_txt}. {seguridad}. UNA FRASE CORTA (max 12 palabras) de consejo directo."}
-            ],
+            messages=[{"role":"user", "content":f"Datos: {datos_txt}. {seguridad}. FRASE CORTA (max 12 palabras)."}],
             max_tokens=35
         )
         return resp.choices[0].message.content.replace('"', '')
     except: return "Mercado volátil."
 
-# --- 6. MOTOR ANALÍTICO ---
+# --- 6. MOTOR ANALÍTICO (CON RESCATE) ---
 async def motor_analisis(ticker, estilo="SCALPING"):
     await asyncio.sleep(0.5) 
     if not estilo: estilo = "SCALPING"
     inv, per = ("1d", "1y") if estilo == "SWING" else ("15m", "5d")
+    
+    # MODO RESCATE ACTIVADO
+    backup_mode = False
 
     try:
+        # Intento 1: Descarga Normal
         df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
-        if df is None or df.empty:
-            if estilo == "SCALPING":
-                inv, per = "1d", "1y" 
-                df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
         
-        if df is None or df.empty: return None, 0.0, 0.0, None
+        # Si falla o está vacío -> Intento 2: Backup Diario
+        if df is None or df.empty or len(df) < 5:
+            print(f"⚠️ {ticker} sin datos {inv}. Cambiando a Diario...")
+            inv, per = "1d", "1y"
+            df = yf.download(ticker, period=per, interval=inv, progress=False, auto_adjust=True)
+            backup_mode = True
+        
+        # Si sigue vacío -> Muerte definitiva
+        if df is None or df.empty or len(df) < 5: 
+            return None, 0.0, 0.0, None
         
         clean = preparar_datos(df)
         if clean.empty: return None, 0.0, 0.0, None
@@ -242,11 +238,14 @@ async def motor_analisis(ticker, estilo="SCALPING"):
             "rsi": f"{row['RSI']:.1f}",
             "señal": señal,
             "icono": icono,
-            "ticker": ticker
+            "ticker": ticker,
+            "backup": backup_mode # Avisamos si usamos backup
         }
         
         return info, prob, row['Close'], clean
-    except: return None, 0.0, 0.0, None
+    except Exception as e:
+        print(f"Error CRITICO en {ticker}: {e}")
+        return None, 0.0, 0.0, None
 
 # --- 7. CONTROLADOR ---
 ARCHIVO_CARTERA = 'cartera.json'
@@ -262,89 +261,67 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
     
     try:
-        # Interpretación
         data = interpretar_intencion(texto)
-        acc = data.get("accion", "CHARLA")
-        tick = data.get("ticker")
-        lst = data.get("lista_activos")
-        est = data.get("estilo", "SCALPING")
-        cat = data.get("categoria", "GENERAL") # <--- AQUI ESTA LA CLAVE
-        explicacion = data.get("explicacion")
-        
+        acc, tick, lst, est, cat, explicacion = (
+            data.get("accion", "CHARLA"), data.get("ticker"), 
+            data.get("lista_activos"), data.get("estilo", "SCALPING"),
+            data.get("categoria", "GENERAL"), data.get("explicacion")
+        )
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
-    except: acc, est, cat, explicacion = "CHARLA", "SCALPING", "GENERAL", None
+    except: acc = "CHARLA"
     
-    # 1. ESTRATEGIA / COMPARACIÓN
     if acc == "COMPARAR" and lst:
-        titulo = "📊 **Estrategia**" if explicacion else f"⚖️ **Comparando activos**"
-        msg = await update.message.reply_text(f"{titulo} ({est})...")
+        titulo = "📊 **Estrategia**" if explicacion else "⚖️ **Comparando**"
+        msg = await update.message.reply_text(f"{titulo}...")
+        reporte = f"{titulo}\n" + (f"💡 _{explicacion}_\n" if explicacion else "") + "━━━━━━━━━━━━━━━━━━\n"
         
-        reporte = f"{titulo} | {est}\n"
-        if explicacion: reporte += f"💡 _{explicacion}_\n"
-        reporte += "━━━━━━━━━━━━━━━━━━\n"
-        
-        encontrados = 0
+        found = False
         for t in lst:
             info, prob, _, _ = await motor_analisis(t, est)
             if info:
-                encontrados += 1
-                reporte += (
-                    f"💎 **{info['ticker']}**\n"
-                    f"💰 ${info['precio']} | {info['icono']} {info['señal']} ({prob*100:.0f}%)\n"
-                    f"🎯 TP: ${info['tp']} | ⛔ SL: ${info['sl']}\n"
-                    f"〰〰〰〰〰〰〰〰〰\n"
-                )
+                found = True
+                modo = " (Diario ⚠️)" if info['backup'] else ""
+                reporte += f"💎 **{info['ticker']}**{modo}\n💰 ${info['precio']} | {info['icono']} ({prob*100:.0f}%)\n🎯 TP: ${info['tp']} | ⛔ SL: ${info['sl']}\n〰〰〰〰〰〰〰〰〰\n"
+        
         await msg.delete()
-        if encontrados > 0: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
+        if found: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
         else: await update.message.reply_text("❌ Sin datos.")
 
-    # 2. RECOMENDACIÓN / ESCÁNER (¡Ahora respeta categorías!)
     elif acc == "RECOMENDAR":
-        msg = await update.message.reply_text(f"🔎 Buscando en **{cat}** ({est})...")
-        
-        # Le pasamos la categoría correcta al escáner
+        msg = await update.message.reply_text(f"🔎 Escaneando **{cat}**...")
         cands = await escanear_mercado_real(cat, est)
-        
-        reporte = f"⚡ **OPORTUNIDADES {cat}**\n━━━━━━━━━━━━━━━━━━\n"
-        encontrados = 0
+        reporte = f"⚡ **{cat}**\n━━━━━━━━━━━━━━━━━━\n"
+        found = False
         for t in cands:
             info, prob, _, _ = await motor_analisis(t, est)
             if prob > 0.5:
-                encontrados += 1
-                reporte += (
-                    f"🔥 **{info['ticker']}**\n"
-                    f"💰 ${info['precio']} | Prob: {prob*100:.0f}%\n"
-                    f"🎯 TP: ${info['tp']}\n"
-                    f"〰〰〰〰〰〰〰〰〰\n"
-                )
+                found = True
+                reporte += f"🔥 **{info['ticker']}**\n💰 ${info['precio']} | Prob: {prob*100:.0f}%\n🎯 TP: ${info['tp']}\n〰〰〰〰〰〰〰〰〰\n"
         await msg.delete()
-        if encontrados > 0: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
-        else: await update.message.reply_text(f"💤 Sin oportunidades claras en {cat}.")
+        if found: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
+        else: await update.message.reply_text(f"💤 Sin oportunidades en {cat}.")
 
-    # 3. ANÁLISIS INDIVIDUAL
     elif acc == "ANALIZAR" and tick:
         msg = await update.message.reply_text(f"🔎 Analizando {tick}...")
         info, prob, _, _ = await motor_analisis(tick, est)
-        
         if info:
             resumen = generar_resumen_breve(f"RSI:{info['rsi']}, Prob:{prob:.2f}", prob)
+            aviso_modo = " | ⚠️ MODO DIARIO (Sin datos 15m)" if info['backup'] else f" | {est.upper()}"
             tarjeta = (
-                f"💎 **{info['ticker']}** | {est.upper()}\n"
+                f"💎 **{info['ticker']}**{aviso_modo}\n"
                 f"💵 **Precio:** `${info['precio']}`\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"🔮 **Señal:** {info['icono']} {info['señal']}\n"
                 f"📊 **Probabilidad:** `{prob*100:.1f}%`\n"
-                f"📝 **Resumen:** _{resumen}_\n"
-                f"\n"
+                f"📝 **Resumen:** _{resumen}_\n\n"
                 f"🛡️ **Plan de Gestión:**\n"
-                f"⛔ Stop Loss: `${info['sl']}`\n"
-                f"🎯 Take Profit: `${info['tp']}`\n"
-                f"\n"
+                f"⛔ SL: `${info['sl']}`\n"
+                f"🎯 TP: `${info['tp']}`\n\n"
                 f"📉 **RSI:** `{info['rsi']}`"
             )
             await msg.delete()
             await update.message.reply_text(tarjeta, parse_mode=ParseMode.MARKDOWN)
-        else: await msg.edit_text(f"⚠️ No pude encontrar datos de {tick}.")
+        else: await msg.edit_text(f"⚠️ No pude leer datos de {tick} (Ni en 15m ni Diario).")
 
     elif acc == "VIGILAR" and tick:
         _, _, p, _ = await motor_analisis(tick, "SWING")
@@ -353,7 +330,7 @@ async def manejar_mensaje_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
         guardar_cartera(c)
         await update.message.reply_text(f"🛡️ Vigilando {tick}")
 
-    else: await update.message.reply_text("👋 Soy tu Bot.\nDi: 'Analiza Rockstar' o 'Qué divisas compro'.")
+    else: await update.message.reply_text("👋 Soy tu Bot.\nDime 'Analiza Rockstar' o 'Qué acciones compro'.")
 
 async def guardian_cartera(context: ContextTypes.DEFAULT_TYPE):
     c = cargar_cartera()
@@ -371,5 +348,5 @@ if __name__ == '__main__':
     app = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), manejar_mensaje_ia))
     if app.job_queue: app.job_queue.run_repeating(guardian_cartera, interval=900, first=30)
-    print("🤖 BOT RECARGADO")
+    print("🤖 BOT BLINDADO ACTIVO")
     app.run_polling()
