@@ -35,59 +35,60 @@ def examinar_activo(df, ticker, categoria="GENERAL"):
     row = df.iloc[-1]
     atr = df['ATR'].iloc[-1] if 'ATR' in df.columns else row['Close'] * 0.01
 
-    # --- LÓGICA CORREGIDA (Sin invertir probabilidades) ---
-    
+    # --- LÓGICA DE SEÑALES ---
     tipo = "NEUTRAL"
     señal = "RANGO"
     icono = "⚪"
     veredicto = "ESPERAR"
     motivo = "Sin tendencia clara"
+    prob_mostrar = prob # Variable para mostrar en el mensaje
 
-    # CASO 1: ALCISTA (LONG) - Probabilidad Alta (> 0.50)
+    # CASO 1: ALCISTA (LONG)
     if prob > 0.50:
-        sl = row['Close'] - (atr * 1.5) # SL Abajo
-        tp = row['Close'] + (atr * 3.0) # TP Arriba
+        sl = row['Close'] - (atr * 1.5)
+        tp = row['Close'] + (atr * 3.0)
         tipo = "LONG (COMPRA)"
         icono = "🟢"
+        prob_mostrar = prob
         
         if prob > 0.60:
             señal = "FUERTE"
             veredicto = "ABRIR LONG 🚀"
-            motivo = f"IA detecta impulso alcista ({prob*100:.0f}%)"
+            motivo = f"IA detecta impulso alcista ({prob_mostrar*100:.0f}%)"
         else:
             señal = "MODERADA"
             veredicto = "POSIBLE REBOTE ↗️"
-            motivo = f"Probabilidad técnica favorable ({prob*100:.0f}%)"
+            motivo = f"Probabilidad técnica favorable ({prob_mostrar*100:.0f}%)"
 
-    # CASO 2: BAJISTA (SHORT) - Probabilidad Baja (< 0.50)
+    # CASO 2: BAJISTA (SHORT)
     else:
-        # En Short, el SL va ARRIBA y el TP va ABAJO
-        sl = row['Close'] + (atr * 1.5) 
+        sl = row['Close'] + (atr * 1.5)
         tp = row['Close'] - (atr * 3.0)
         tipo = "SHORT (VENTA)"
         icono = "🔴"
+        # Invertimos la probabilidad para el mensaje: 16% subida -> 84% bajada
+        prob_mostrar = 1.0 - prob
         
         if prob < 0.40:
             señal = "FUERTE"
             veredicto = "ABRIR SHORT 📉"
-            motivo = f"IA detecta caída inminente ({prob*100:.0f}%)"
+            motivo = f"IA detecta caída inminente ({prob_mostrar*100:.0f}%)"
         else:
             señal = "MODERADA"
             veredicto = "POSIBLE CORRECCIÓN ↘️"
-            motivo = f"Debilidad técnica detectada ({prob*100:.0f}%)"
+            motivo = f"Debilidad técnica detectada ({prob_mostrar*100:.0f}%)"
 
-    # Filtro de categoría: Si es Acciones, evitamos recomendar Short directo
     if tipo == "SHORT (VENTA)" and categoria == "ACCIONES":
         veredicto = "NO COMPRAR (BAJISTA) ❌"
         motivo = "Acción en tendencia bajista. Esperar."
 
-    fmt = ",.4f" if row['Close'] < 50 else ",.2f"
-   if "JPY=X" in ticker:
-        fmt = ",.3f" 
-    elif "COP" in ticker or "CLP" in ticker:
+    # --- CORRECCIÓN DE DECIMALES Y JPY ---
+    if "JPY=X" in ticker:
         fmt = ",.3f"
+    elif any(x in ticker for x in ["COP", "CLP", "PYP"]):
+        fmt = ",.0f"
     else:
-        fmt = ",.3f" if row['Close'] < 50 else ",.3f"
+        fmt = ",.4f" if row['Close'] < 50 else ",.2f"
 
     info = {
         "ticker": ticker,
@@ -99,8 +100,7 @@ def examinar_activo(df, ticker, categoria="GENERAL"):
         "icono": icono,
         "veredicto": veredicto,
         "tipo_operacion": tipo,
-        "motivo": motivo # <--- Nueva variable explicativa
+        "motivo": motivo
     }
     
     return info, prob
-
