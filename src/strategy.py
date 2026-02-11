@@ -82,7 +82,12 @@ def examinar_activo(df, ticker, categoria="GENERAL"):
         motivo = "Acción en tendencia bajista. Esperar."
 
     fmt = ",.4f" if row['Close'] < 50 else ",.2f"
-    if "COP" in ticker or "CLP" in ticker or "JPY" in ticker: fmt = ",.0f"
+   if "JPY=X" in ticker:
+        fmt = ",.3f" 
+    elif "COP" in ticker or "CLP" in ticker:
+        fmt = ",.3f"
+    else:
+        fmt = ",.3f" if row['Close'] < 50 else ",.3f"
 
     info = {
         "ticker": ticker,
@@ -98,3 +103,4 @@ def examinar_activo(df, ticker, categoria="GENERAL"):
     }
     
     return info, prob
+
