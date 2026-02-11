@@ -5,14 +5,16 @@ from sklearn.ensemble import RandomForestClassifier
 # --- CEREBRO MATEMÁTICO (Machine Learning) ---
 class Predictor:
     def __init__(self):
+        # Configuramos el modelo de Bosque Aleatorio
         self.model = RandomForestClassifier(n_estimators=100, random_state=42)
         self.entrenado = False
 
     def entrenar(self, data):
         if data is None or len(data) < 5: return
-        # Entrenamos con indicadores técnicos
+        # Entrenamos usando las columnas técnicas que generamos en data_loader
         cols = [f for f in ['RSI', 'MACD', 'Signal', 'SMA_50', 'Volatilidad'] if f in data.columns]
         try:
+            # Target es la columna que nos dice si el precio subió al día siguiente
             self.model.fit(data[cols], data['Target'])
             self.entrenado = True
         except: self.entrenado = False
@@ -21,11 +23,11 @@ class Predictor:
         if not self.entrenado: return 0, 0.5
         try:
             cols = [f for f in ['RSI', 'MACD', 'Signal', 'SMA_50', 'Volatilidad'] if f in data.columns]
-            # Retorna la clase (0 o 1) y la probabilidad (0% a 100%)
+            # Retorna: Clase (Sube/Baja) y Probabilidad (0.0 a 1.0)
             return self.model.predict(data[cols].iloc[[-1]])[0], self.model.predict_proba(data[cols].iloc[[-1]])[0][1]
         except: return 0, 0.5
 
-# --- EL GENERAL: DECISIÓN DE TRADING ---
+# --- EL GENERAL: TOMA DE DECISIONES ---
 def examinar_activo(df, ticker, categoria="GENERAL"):
     """
     Recibe los datos crudos y decide la estrategia (Long/Short).
@@ -63,7 +65,7 @@ def examinar_activo(df, ticker, categoria="GENERAL"):
         veredicto = "ABRIR SHORT 📉"
         sl = row['Close'] + (atr * 1.5) # SL Arriba
         tp = row['Close'] - (atr * 3.0) # TP Abajo
-        prob = 1.0 - prob # Invertimos la probabilidad para mostrar fuerza
+        prob = 1.0 - prob # Invertimos la probabilidad para mostrar fuerza (ej: 30% prob subida = 70% fuerza bajada)
 
     # CASO 3: NEUTRAL ✋
     else:
@@ -74,7 +76,7 @@ def examinar_activo(df, ticker, categoria="GENERAL"):
         sl = row['Close'] * 0.99
         tp = row['Close'] * 1.01
 
-    # Formato de precios
+    # Formato de precios (Sin decimales para monedas grandes como COP o CLP)
     fmt = ",.4f" if row['Close'] < 50 else ",.2f"
     if "COP" in ticker or "CLP" in ticker or "JPY" in ticker: fmt = ",.0f"
 
@@ -91,4 +93,3 @@ def examinar_activo(df, ticker, categoria="GENERAL"):
     }
     
     return info, prob
-
