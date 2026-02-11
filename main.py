@@ -9,7 +9,8 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 
 # --- IMPORTAMOS TUS MÓDULOS DE LA CARPETA SRC ---
 # Asegúrate de que los archivos en 'src' se llamen exactamente así:
-from src.data_loader import motor_analisis 
+from src.data_loader import descargar_datos
+from src.strategy import examinar_activo  # <--- NUEVO IMPORT
 from src.brain import interpretar_intencion, generar_resumen_humano
 from src.scanner import escanear_mercado
 
