@@ -4,31 +4,22 @@ import numpy as np
 
 # --- DICCIONARIO GLOBAL ---
 SINONIMOS = {
-    # EMPRESAS
     "ROCKSTAR": "TTWO", "GTA": "TTWO", "TAKE TWO": "TTWO", "TTWO": "TTWO",
     "TESLA": "TSLA", "NVIDIA": "NVDA", "APPLE": "AAPL", "GOOGLE": "GOOGL", "META": "META",
     "AMAZON": "AMZN", "MICROSOFT": "MSFT", "NETFLIX": "NFLX", "MERCADO LIBRE": "MELI", "NU BANK": "NU",
-
-    # ESTRATEGIAS
     "CHINA": "YANG", "CONTRA CHINA": "YANG",
     "EEUU": "SQQQ", "CONTRA EEUU": "SQQQ", "USA": "SQQQ",
     "EUROPA": "EPV", "CONTRA EUROPA": "EPV", "ALEMANIA": "EPV",
     "JAPON": "EWV", "CONTRA JAPON": "EWV",
-
-    # LATINOAMÉRICA & FOREX
     "COLOMBIA": "GXG", "CONTRA COLOMBIA": "COP=X",
     "MEXICO": "EWW", "CONTRA MEXICO": "MXN=X",
     "CHILE": "ECH", "CONTRA CHILE": "USDCLP=X",
     "PERU": "EPU", "CONTRA PERU": "USDPEN=X",
     "BRASIL": "EWZ", "CONTRA BRASIL": "BZQ",
     "ARGENTINA": "ARGT", "CONTRA ARGENTINA": "USDARS=X", 
-    
-    # REFUGIOS
     "VENEZUELA": "BTC-USD", "CONTRA VENEZUELA": "BTC-USD",
     "ECUADOR": "GLD", "CONTRA ECUADOR": "GLD",
     "PANAMA": "GLD", "CONTRA PANAMA": "GLD",
-
-    # ACTIVOS
     "DOLAR": "COP=X", "USD": "COP=X", "PESO": "COP=X",
     "EURO": "EURUSD=X",
     "BITCOIN": "BTC-USD", "BTC": "BTC-USD", "ETH": "ETH-USD",
@@ -43,7 +34,7 @@ def normalizar_ticker(ticker):
     return t.replace(" ", "")
 
 def preparar_datos(df):
-    """Calcula indicadores matemáticos"""
+    """Calcula indicadores matemáticos necesarios para la Estrategia"""
     df = df.copy()
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     for col in ['Close', 'High', 'Low', 'Open']:
@@ -66,7 +57,8 @@ def preparar_datos(df):
         ranges = pd.concat([df['High']-df['Low'], (df['High']-df['Close'].shift()).abs(), (df['Low']-df['Close'].shift()).abs()], axis=1)
         df['ATR'] = ranges.max(axis=1).rolling(14).mean().bfill()
         
-        # Objetivo (Target) para la IA
+        # --- IMPORTANTE: CREAR EL OBJETIVO (TARGET) ---
+        # Esto es lo que la IA de Strategy aprende (1 si subió, 0 si bajó)
         df['Target'] = (df['Close'].shift(-1) > df['Close']).astype(int)
         df['Volatilidad'] = df['Close'].rolling(20).std()
         df['SMA_50'] = df['Close'].rolling(50).mean()
@@ -75,7 +67,6 @@ def preparar_datos(df):
     except: return pd.DataFrame()
 
 async def descargar_datos(ticker, estilo="SCALPING"):
-    """Solo descarga datos, no analiza."""
     inv, per = ("1d", "1y") if estilo == "SWING" else ("15m", "5d")
     backup = False
     
