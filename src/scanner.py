@@ -1,89 +1,69 @@
-import yfinance as yf
 import pandas as pd
+import yfinance as yf
+import asyncio
 
-# --- UNIVERSO DE ACTIVOS (AQUÍ PUEDES AGREGAR MÁS) ---
+# --- EL MEGA-UNIVERSO DE ACTIVOS ---
 UNIVERSO = {
     "FOREX": [
-        'EURUSD=X', 'GBPUSD=X', 'JPY=X', 'AUDUSD=X', 'NZDUSD=X', 
-        'USDCAD=X', 'USDCHF=X', 'COP=X', 'MXN=X', 'BRL=X'
+        # Majors
+        'EURUSD=X', 'GBPUSD=X', 'JPY=X', 'AUDUSD=X', 'NZDUSD=X', 'USDCAD=X', 'USDCHF=X',
+        # Cruces y Exóticos
+        'EURGBP=X', 'EURJPY=X', 'GBPJPY=X', 'AUDJPY=X', 'CHFJPY=X', 'EURAUD=X',
+        # Latinos
+        'COP=X', 'MXN=X', 'BRL=X', 'CLP=X', 'PEN=X'
     ],
     "CRIPTO": [
-        'BTC-USD', 'ETH-USD', 'BNB-USD', 'SOL-USD', 'XRP-USD', 
-        'DOGE-USD', 'ADA-USD', 'AVAX-USD', 'DOT-USD', 'MATIC-USD',
-        'LINK-USD', 'SHIB-USD', 'LTC-USD', 'PEPE-USD'
+        # Top Market Cap
+        'BTC-USD', 'ETH-USD', 'BNB-USD', 'SOL-USD', 'XRP-USD', 'ADA-USD', 'DOGE-USD',
+        'AVAX-USD', 'TRX-USD', 'DOT-USD', 'LINK-USD', 'MATIC-USD', 'SHIB-USD', 'LTC-USD',
+        'UNI-USD', 'ATOM-USD', 'XLM-USD', 'NEAR-USD', 'ALGO-USD', 'APE-USD', 'SAND-USD'
     ],
     "ACCIONES": [
-        # Tecnológicas (Magnificent 7 + otras)
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META', 'NFLX', 'AMD', 'INTC',
-        # Financieras y Consumo
-        'JPM', 'V', 'MA', 'DIS', 'KO', 'PEP', 'MCD', 'WMT',
-        # ETFs y Materias Primas (GLD = Oro, SLV = Plata, USO = Petróleo)
-        'SPY', 'QQQ', 'GLD', 'SLV', 'USO'
+        # Tech Gigantes (Magnificent 7)
+        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META',
+        # Populares y Volátiles
+        'NFLX', 'AMD', 'INTC', 'PYPL', 'COIN', 'UBER', 'ABNB', 'SHOP', 'SQ', 'ROKU',
+        # ETFs Inversos y Apalancados
+        'SQQQ', 'TQQQ', 'SOXL', 'SOXS', 'LABU', 'LABD',
+        # Latinos
+        'NU', 'MELI', 'ECOPETROL.CN'
+    ],
+    "GENERAL": [
+        'BTC-USD', 'ETH-USD', 'EURUSD=X', 'GBPUSD=X', 'AAPL', 'NVDA', 'TSLA', 'COP=X', 'XRP-USD'
     ]
 }
 
 async def escanear_mercado(categoria="GENERAL", estilo="SCALPING"):
     """
-    Escanea el mercado buscando activos con movimiento interesante.
+    Escanea listas grandes buscando volatilidad.
     """
-    # 1. Seleccionar la lista
-    if categoria == "GENERAL":
-        # Mezcla un poco de todo para el escáner general
-        lista = UNIVERSO["ACCIONES"][:10] + UNIVERSO["FOREX"][:5] + UNIVERSO["CRIPTO"][:5]
-    else:
-        lista = UNIVERSO.get(categoria, [])
-
-    if not lista: return []
-
-    print(f"📡 Escaneando {len(lista)} activos ({categoria}) en modo {estilo}...")
-
-    # 2. Configurar Tiempos (Scalping vs Swing)
-    if estilo == "SCALPING":
-        intervalo = "15m"   # Velas de 15 minutos
-        periodo = "5d"      # Últimos 5 días
-        umbral = 0.003      # 0.3% de movimiento mínimo
-    else:
-        intervalo = "1d"    # Velas diarias
-        periodo = "6mo"     # Últimos 6 meses
-        umbral = 0.015      # 1.5% de movimiento mínimo
-
-    # 3. Descarga Masiva (Optimizada)
+    lista = UNIVERSO.get(categoria, UNIVERSO["GENERAL"])
+    inter, per = ("15m", "5d") if estilo == "SCALPING" else ("1d", "6mo")
+    
     try:
-        datos = yf.download(lista, period=periodo, interval=intervalo, progress=False)['Close']
+        # Descarga masiva (Optimizado)
+        # yfinance descarga todo de una vez, es rápido aunque la lista sea larga
+        datos = yf.download(lista, period=per, interval=inter, progress=False, auto_adjust=True)['Close']
+        
+        if isinstance(datos, pd.Series): datos = datos.to_frame()
+        
+        candidatos = []
+        for ticker in lista:
+            if ticker in datos.columns:
+                precios = datos[ticker].dropna()
+                
+                if len(precios) > 5:
+                    # Filtro de Volatilidad:
+                    # Solo nos interesan activos que se hayan movido al menos un 0.2% recientemente
+                    # Así evitamos que el bot te recomiende "monedas muertas"
+                    volatilidad = abs((precios.iloc[-1] - precios.iloc[-4]) / precios.iloc[-4])
+                    
+                    if volatilidad > 0.002: 
+                        candidatos.append(ticker)
+                    
+        # Retornamos hasta 10 candidatos para tener variedad
+        return candidatos[:10]
+        
     except Exception as e:
-        print(f"⚠️ Error descarga masiva: {e}")
-        return []
-    
-    candidatos = []
-    
-    # Si solo hay un activo, 'datos' es una Serie, lo convertimos a DataFrame
-    if isinstance(datos, pd.Series): datos = datos.to_frame()
-
-    # 4. Filtrar Volatilidad
-    for ticker in lista:
-        try:
-            if ticker not in datos.columns: continue
-            
-            precios = datos[ticker].dropna()
-            if len(precios) < 5: continue
-            
-            precio_actual = precios.iloc[-1]
-            
-            # Comparar con el pasado reciente
-            if estilo == "SCALPING":
-                referencia = precios.iloc[-4] # Hace 1 hora (4 velas de 15m)
-            else:
-                referencia = precios.iloc[-2] # Ayer
-            
-            cambio = (precio_actual - referencia) / referencia
-            volatilidad = abs(cambio)
-            
-            # Si se mueve más que el umbral, es candidato
-            if volatilidad > umbral:
-                candidatos.append({"ticker": ticker, "vol": volatilidad})
-        except: continue
-
-    # Ordenar por los más volátiles y devolver el Top 5
-    candidatos.sort(key=lambda x: x['vol'], reverse=True)
-    return [x['ticker'] for x in candidatos[:5]]
-
+        print(f"Error scanner: {e}")
+        return lista[:5]
