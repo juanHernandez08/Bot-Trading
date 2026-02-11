@@ -22,7 +22,7 @@ UNIVERSO = {
     ]
 }
 
-async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
+async def escanear_mercado(categoria="GENERAL", estilo="SCALPING"):
     """
     Escanea el mercado buscando activos con movimiento interesante.
     """
@@ -86,3 +86,4 @@ async def escanear_mercado_real(categoria="GENERAL", estilo="SCALPING"):
     # Ordenar por los más volátiles y devolver el Top 5
     candidatos.sort(key=lambda x: x['vol'], reverse=True)
     return [x['ticker'] for x in candidatos[:5]]
+
