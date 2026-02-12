@@ -2,7 +2,7 @@ import logging
 import json
 import os
 import asyncio
-import traceback # <--- Nuevo para ver el error real
+import traceback
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ParseMode
@@ -51,20 +51,28 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_espera = await update.message.reply_text("⏳ **Analizando...**", parse_mode=ParseMode.MARKDOWN)
     
     try:
-        # IA INTERPRETA
+        # IA INTERPRETA INTENCIÓN
         data = interpretar_intencion(texto)
-        if not est: 
-            est = "SCALPING"
+        
+        # --- CORRECCIÓN DEL ERROR ---
+        # 1. Extraemos las variables PRIMERO
         acc = data.get("accion", "CHARLA")
         tick = data.get("ticker")
         lst = data.get("lista_activos")
-        est = data.get("estilo", "SCALPING")
+        est = data.get("estilo")  # Primero la obtenemos
         cat = data.get("categoria", "GENERAL") 
         explicacion = data.get("explicacion")
         
+        # 2. Luego verificamos si está vacía
+        if not est: 
+            est = "SCALPING"
+            
+        # Si dice "Analiza" pero no da ticker, asumimos que quiere recomendaciones
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
 
-        # 1. COMPARAR
+        # ------------------------------------------------------------------
+        # BLOQUE 1: COMPARAR
+        # ------------------------------------------------------------------
         if acc == "COMPARAR" and lst:
             await msg_espera.edit_text(f"⚖️ **Comparando...**")
             reporte = f"📊 **Estrategia** | {est}\n━━━━━━━━━━━━━━━━━━\n"
@@ -83,7 +91,9 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if encontrados: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
             else: await update.message.reply_text("❌ Sin datos.")
 
-        # 2. RECOMENDAR
+        # ------------------------------------------------------------------
+        # BLOQUE 2: RECOMENDAR
+        # ------------------------------------------------------------------
         elif acc == "RECOMENDAR":
             cats = ["CRIPTO", "FOREX", "ACCIONES"] if cat == "GENERAL" else [cat]
             await msg_espera.edit_text(f"🌎 **Escaneando {cat}...**")
@@ -92,12 +102,9 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             hay = False
             
             for c in cats:
-                # Usamos try-except interno para que no falle todo si una lista falla
                 try:
                     candidatos = await escanear_mercado(c, est)
-                except Exception as e:
-                    print(f"Error escaneando {c}: {e}")
-                    candidatos = []
+                except: candidatos = []
                     
                 for t in candidatos:
                     try:
@@ -116,13 +123,15 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     f"⛔ SL: ${info['sl']}\n" 
                                     f"📝 _{info.get('motivo', '')}_\n\n"
                                 )
-                    except: continue # Si falla un activo, pasa al siguiente
+                    except: continue 
             
             await msg_espera.delete()
             if hay: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
             else: await update.message.reply_text(f"💤 Mercado lateral en {cat}. No hay entradas claras.")
 
-        # 3. ANALIZAR
+        # ------------------------------------------------------------------
+        # BLOQUE 3: ANALIZAR INDIVIDUAL
+        # ------------------------------------------------------------------
         elif acc == "ANALIZAR" and tick:
             await msg_espera.edit_text(f"🔎 **Calculando {tick}...**")
             info, prob = await analizar_activo_completo(tick, est, cat)
@@ -150,10 +159,8 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("👋 Hola. Prueba 'Oportunidades Forex' o 'Analiza BTC'.")
 
     except Exception as e:
-        # --- AQUÍ ESTÁ LA MAGIA DEL DIAGNÓSTICO ---
-        # Esto te enviará el error exacto al chat
         error_msg = f"⚠️ **Error Técnico:**\n`{str(e)}`"
-        print(traceback.format_exc()) # Imprime en consola Railway
+        print(traceback.format_exc()) 
         try: await msg_espera.delete() 
         except: pass
         await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
@@ -162,6 +169,8 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cazador_automatico(context: ContextTypes.DEFAULT_TYPE):
     global TELEGRAM_CHAT_ID
     if not TELEGRAM_CHAT_ID: return
+    
+    # Solo escaneamos FOREX en automático para no saturar
     categorias = ["FOREX"] 
     
     for cat in categorias:
