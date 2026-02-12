@@ -2,6 +2,7 @@ import logging
 import json
 import os
 import asyncio
+import traceback # <--- Nuevo para ver el error real
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ParseMode
@@ -21,22 +22,17 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 ARCHIVO_CARTERA = 'cartera.json'
 
-# --- FUNCIÓN PEGAMENTO (Coordina Data + Estrategia) ---
+# --- FUNCIÓN PEGAMENTO ---
 async def analizar_activo_completo(ticker, estilo, categoria):
-    # 1. Descargar Datos
     df, backup_mode = await descargar_datos(ticker, estilo)
     if df is None or df.empty: return None, 0.0
-
-    # 2. Analizar Estrategia (Calcula TP, SL, Motivo y Mercado)
     info, prob = examinar_activo(df, ticker, categoria)
-    
-    # 3. Empaquetar resultado
     if info:
         info['backup'] = backup_mode
         return info, prob
     return None, 0.0
 
-# --- GESTIÓN DE CARTERA (Simulación) ---
+# --- GESTIÓN DE CARTERA ---
 def cargar_cartera():
     try: return json.load(open(ARCHIVO_CARTERA)) if os.path.exists(ARCHIVO_CARTERA) else []
     except: return []
@@ -45,43 +41,31 @@ def guardar_cartera(d):
     try: json.dump(d, open(ARCHIVO_CARTERA, 'w'))
     except: pass
 
-# --- CEREBRO PRINCIPAL (INTERACCIÓN MANUAL) ---
+# --- CEREBRO PRINCIPAL ---
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
-    
-    # Actualizamos el ID para que el Cazador sepa a dónde enviar alertas
     global TELEGRAM_CHAT_ID
     TELEGRAM_CHAT_ID = update.effective_chat.id
     
-    # 1. FEEDBACK VISUAL (Barra de espera)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
-    msg_espera = await update.message.reply_text("⏳ **Analizando mercado...**", parse_mode=ParseMode.MARKDOWN)
+    msg_espera = await update.message.reply_text("⏳ **Analizando...**", parse_mode=ParseMode.MARKDOWN)
     
     try:
-        # 2. IA INTERPRETA INTENCIÓN
+        # IA INTERPRETA
         data = interpretar_intencion(texto)
         acc = data.get("accion", "CHARLA")
         tick = data.get("ticker")
         lst = data.get("lista_activos")
-        est = data.get("estilo")
+        est = data.get("estilo", "SCALPING")
         cat = data.get("categoria", "GENERAL") 
         explicacion = data.get("explicacion")
         
-        if not est: est = "SCALPING"
-        # Si dice "Analiza" pero no da ticker, asumimos que quiere recomendaciones
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
 
-        # ------------------------------------------------------------------
-        # BLOQUE 1: COMPARAR (Estrategias contra países)
-        # ------------------------------------------------------------------
+        # 1. COMPARAR
         if acc == "COMPARAR" and lst:
-            await msg_espera.edit_text(f"⚖️ **Comparando activos ({est})...**")
-            
-            titulo = "📊 **Estrategia**" if explicacion else "⚖️ **Comparando**"
-            reporte = f"{titulo} | {est}\n"
-            if explicacion: reporte += f"💡 _{explicacion}_\n"
-            reporte += "━━━━━━━━━━━━━━━━━━\n"
-            
+            await msg_espera.edit_text(f"⚖️ **Comparando...**")
+            reporte = f"📊 **Estrategia** | {est}\n━━━━━━━━━━━━━━━━━━\n"
             encontrados = False
             for t in lst:
                 info, prob, = await analizar_activo_completo(t, est, cat)
@@ -91,169 +75,114 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"💎 **{info['ticker']}** ({info.get('mercado', 'GEN')})\n"
                         f"💰 ${info['precio']} | {info['tipo_operacion']} {info['icono']}\n"
                         f"🎯 TP: ${info['tp']} | ⛔ SL: ${info['sl']}\n"
-                        f"📝 _{info.get('motivo', 'Análisis técnico')}_\n"
-                        f"〰〰〰〰〰〰〰〰〰\n"
+                        f"📝 _{info.get('motivo', '')}_\n\n"
                     )
-            
             await msg_espera.delete()
             if encontrados: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
             else: await update.message.reply_text("❌ Sin datos.")
 
-        # ------------------------------------------------------------------
-        # BLOQUE 2: RECOMENDAR (MEGA ESCÁNER)
-        # ------------------------------------------------------------------
+        # 2. RECOMENDAR
         elif acc == "RECOMENDAR":
-            # Si es GENERAL, escanea todo. Si es específica, solo esa categoría.
             cats = ["CRIPTO", "FOREX", "ACCIONES"] if cat == "GENERAL" else [cat]
-            await msg_espera.edit_text(f"🌎 **Escaneando {cat}...**\nBuscando las mejores probabilidades.")
+            await msg_espera.edit_text(f"🌎 **Escaneando {cat}...**")
             
             reporte = f"⚡ **OPORTUNIDADES ({est})**\n━━━━━━━━━━━━━━━━━━\n"
             hay = False
-
+            
             for c in cats:
-                candidatos = await escanear_mercado(c, est)
-                for t in candidatos:
-                    info, prob = await analizar_activo_completo(t, est, c)
+                # Usamos try-except interno para que no falle todo si una lista falla
+                try:
+                    candidatos = await escanear_mercado(c, est)
+                except Exception as e:
+                    print(f"Error escaneando {c}: {e}")
+                    candidatos = []
                     
-                    if info:
-                        # FILTRO SENSIBLE:
-                        # Long > 53% | Short < 47% (Solo Forex/Cripto)
-                        es_long = prob > 0.53
-                        es_short = (prob < 0.47 and c in ['FOREX', 'CRIPTO'])
-
-                        if es_long or es_short:
-                            hay = True
-                            fuerza_texto = info.get('señal', 'MODERADA') 
-                            icono = "🔥" if fuerza_texto == "FUERTE" else "⚠️"
-                            etiqueta = info.get('mercado', 'GEN')
-                            
-                            reporte += (
-                                f"{icono} **{info['ticker']}** ({etiqueta})\n"
-                                f"💰 ${info['precio']} | {info['veredicto']}\n"
-                                f"🎯 TP: ${info['tp']}\n"
-                                f"⛔ SL: ${info['sl']}\n" 
-                                f"📝 _{info.get('motivo', '')}_\n"
-                                f"〰〰〰〰〰〰〰〰〰\n"
-                            )
+                for t in candidatos:
+                    try:
+                        info, prob = await analizar_activo_completo(t, est, c)
+                        if info:
+                            # Filtros Sensibles
+                            es_long = prob > 0.53
+                            es_short = prob < 0.47
+                            if es_long or es_short:
+                                hay = True
+                                icono = "🔥" if info.get('señal') == "FUERTE" else "⚠️"
+                                reporte += (
+                                    f"{icono} **{info['ticker']}** ({info.get('mercado', 'GEN')})\n"
+                                    f"💰 ${info['precio']} | {info['veredicto']}\n"
+                                    f"🎯 TP: ${info['tp']}\n"
+                                    f"⛔ SL: ${info['sl']}\n" 
+                                    f"📝 _{info.get('motivo', '')}_\n\n"
+                                )
+                    except: continue # Si falla un activo, pasa al siguiente
             
             await msg_espera.delete()
             if hay: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
-            else: await update.message.reply_text(f"💤 Mercado lateral. No encontré entradas claras.")
+            else: await update.message.reply_text(f"💤 Mercado lateral en {cat}. No hay entradas claras.")
 
-        # ------------------------------------------------------------------
-        # BLOQUE 3: ANALIZAR INDIVIDUAL
-        # ------------------------------------------------------------------
+        # 3. ANALIZAR
         elif acc == "ANALIZAR" and tick:
             await msg_espera.edit_text(f"🔎 **Calculando {tick}...**")
             info, prob = await analizar_activo_completo(tick, est, cat)
             
             if info:
-                # Generamos resumen humano usando la IA y los datos técnicos
                 razon_ia = generar_resumen_humano(f"RSI:{info['rsi']} Motivo:{info.get('motivo')}", prob)
-                aviso_modo = " | ⚠️ DIARIO" if info['backup'] else f" | {est.upper()}"
-                
                 tarjeta = (
-                    f"💎 **{info['ticker']}** ({info.get('mercado', 'GEN')}){aviso_modo}\n"
-                    f"💵 **Precio:** `${info['precio']}`\n"
+                    f"💎 **{info['ticker']}** ({info.get('mercado', 'GEN')})\n"
+                    f"💵 Precio: `${info['precio']}`\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
-                    f"💡 **CONCLUSIÓN:**\n"
                     f"👉 **{info['veredicto']}**\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"📝 **Análisis:** _{info.get('motivo', '')}_\n"
-                    f"🤖 **IA:** _{razon_ia}_\n\n"
-                    f"🛡️ **Gestión de Riesgo:**\n"
+                    f"📝 _{info.get('motivo', '')}_\n"
+                    f"🤖 IA: _{razon_ia}_\n\n"
                     f"⛔ SL: `${info['sl']}`\n"
-                    f"🎯 TP: `${info['tp']}`\n"
-                    f"📉 RSI: `{info['rsi']}`"
+                    f"🎯 TP: `${info['tp']}`"
                 )
                 await msg_espera.delete()
                 await update.message.reply_text(tarjeta, parse_mode=ParseMode.MARKDOWN)
             else: 
                 await msg_espera.delete()
                 await update.message.reply_text(f"❌ No pude leer datos de {tick}.")
-
-        # ------------------------------------------------------------------
-        # BLOQUE 4: VIGILAR
-        # ------------------------------------------------------------------
-        elif acc == "VIGILAR" and tick:
-            info, _ = await analizar_activo_completo(tick, "SWING", cat)
-            await msg_espera.delete()
-            if info:
-                c = cargar_cartera()
-                precio_limpio = float(info['precio'].replace(",",""))
-                c.append({"ticker": tick, "precio_compra": precio_limpio})
-                guardar_cartera(c)
-                await update.message.reply_text(f"🛡️ Vigilando {tick} desde ${info['precio']}")
-            else: await update.message.reply_text("❌ Error al obtener precio.")
-
+        
         else:
             await msg_espera.delete()
-            await update.message.reply_text("👋 Hola. Prueba: 'Qué hacemos hoy?', 'Oportunidades Cripto' o 'Analiza Tesla'.")
+            await update.message.reply_text("👋 Hola. Prueba 'Oportunidades Forex' o 'Analiza BTC'.")
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        try: await msg_espera.delete()
+        # --- AQUÍ ESTÁ LA MAGIA DEL DIAGNÓSTICO ---
+        # Esto te enviará el error exacto al chat
+        error_msg = f"⚠️ **Error Técnico:**\n`{str(e)}`"
+        print(traceback.format_exc()) # Imprime en consola Railway
+        try: await msg_espera.delete() 
         except: pass
-        await update.message.reply_text("⚠️ Ocurrió un error interno.")
+        await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
 
-# --- 🚀 CAZADOR AUTOMÁTICO (SOLO FOREX) 🚀 ---
+# --- CAZADOR AUTOMÁTICO ---
 async def cazador_automatico(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Escanea periódicamente buscando oportunidades.
-    CONFIGURADO SOLO PARA FOREX (FOR).
-    """
     global TELEGRAM_CHAT_ID
     if not TELEGRAM_CHAT_ID: return
-    
-    # ⚠️ SOLO FOREX
     categorias = ["FOREX"] 
-    print("🕵️‍♂️ Cazador de Divisas (FOREX) Buscando...")
     
     for cat in categorias:
-        candidatos = await escanear_mercado(cat, "SCALPING")
-        for t in candidatos:
-            info, prob = await analizar_activo_completo(t, "SCALPING", cat)
-            
-            if info:
-                # Filtros de Sensibilidad para Scalping
-                es_long = prob > 0.53
-                es_short = prob < 0.47 
-                
-                if es_long or es_short:
-                    titulo = info['tipo_operacion'] 
-                    icono = info['icono']
-                    fuerza = info['señal']
-                    motivo = info.get('motivo', 'Patrón técnico detectado')
-                    etiqueta = info.get('mercado', 'GEN')
-                    
-                    mensaje = (
-                        f"{icono} **ALERTA AUTOMÁTICA: {titulo}**\n"
-                        f"💎 Activo: **{info['ticker']}** ({etiqueta})\n"
-                        f"📊 Señal: **{fuerza}**\n"
-                        f"📝 Porqué: _{motivo}_\n"
-                        f"━━━━━━━━━━━━━━━━━━\n"
-                        f"💰 Entrada: `${info['precio']}`\n"
-                        f"🎯 TP: `${info['tp']}`\n"
-                        f"⛔ SL: `${info['sl']}`"
-                    )
-                    
-                    try:
-                        await context.bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=mensaje, parse_mode=ParseMode.MARKDOWN)
-                        await asyncio.sleep(4) # Pausa para no saturar
-                    except: pass
+        try:
+            candidatos = await escanear_mercado(cat, "SCALPING")
+            for t in candidatos:
+                info, prob = await analizar_activo_completo(t, "SCALPING", cat)
+                if info:
+                    if prob > 0.53 or prob < 0.47:
+                        mensaje = (
+                            f"{info['icono']} **ALERTA: {info['tipo_operacion']}**\n"
+                            f"💎 **{info['ticker']}** ({info.get('mercado','GEN')})\n"
+                            f"📝 _{info.get('motivo', '')}_\n"
+                            f"💰 Ent: `${info['precio']}`\n"
+                            f"🎯 TP: `${info['tp']}` | ⛔ SL: `${info['sl']}`"
+                        )
+                        try: await context.bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=mensaje, parse_mode=ParseMode.MARKDOWN)
+                        except: pass
+        except: pass
 
-# --- ARRANQUE ---
 if __name__ == '__main__':
-    if not TELEGRAM_TOKEN: 
-        print("❌ Error: Falta TELEGRAM_TOKEN en .env")
-        exit()
-        
+    if not TELEGRAM_TOKEN: exit()
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), manejar_mensaje))
-    
-    if app.job_queue:
-        # Tarea automática: Cazador cada 30 minutos (1800 segundos)
-        app.job_queue.run_repeating(cazador_automatico, interval=1800, first=30)
-        
-    print("🤖 BOT CAZADOR ACTIVO (SOLO FOREX + ETIQUETAS) 🚀")
+    if app.job_queue: app.job_queue.run_repeating(cazador_automatico, interval=1800, first=30)
     app.run_polling()
