@@ -22,7 +22,6 @@ class Predictor:
             return self.model.predict(data[cols].iloc[[-1]])[0], self.model.predict_proba(data[cols].iloc[[-1]])[0][1]
         except: return 0, 0.5
 
-# ⚠️ AHORA ACEPTAMOS EL ARGUMENTO 'ESTILO'
 def examinar_activo(df, ticker, estilo="SCALPING", categoria="GENERAL"):
     if df is None or df.empty: return None, 0.0
 
@@ -34,8 +33,10 @@ def examinar_activo(df, ticker, estilo="SCALPING", categoria="GENERAL"):
     df['SMA_200'] = df['Close'].rolling(window=200).mean()
     df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
     
-    # Llenar vacíos
-    df.fillna(method='bfill', inplace=True)
+    # --- CORRECCIÓN DEL ERROR ---
+    # Antes: df.fillna(method='bfill', inplace=True)
+    # Ahora (Compatible con Pandas nuevo):
+    df = df.bfill()
 
     # 2. IA
     prob = 0.5
@@ -106,7 +107,7 @@ def examinar_activo(df, ticker, estilo="SCALPING", categoria="GENERAL"):
         ema_50 = row['EMA_50']
         # SL y TP más amplios basados en ATR
         sl_dist = atr * 2.0
-        tp_dist = atr * 4.0 # Ratio 1:2 pero recorriendo mucho precio
+        tp_dist = atr * 4.0 
 
         # LONG GOLDEN
         if prob > 0.65 and precio > sma_200 and precio > ema_50 and rsi < 65:
