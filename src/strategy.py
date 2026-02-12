@@ -33,7 +33,8 @@ def examinar_activo(df, ticker, categoria="GENERAL"):
         _, prob = brain.predecir_mañana(df)
     
     row = df.iloc[-1]
-    atr = df['ATR'].iloc[-1] if 'ATR' in df.columns else row['Close'] * 0.01
+    # Calculamos el ATR (Volatilidad promedio)
+    atr = df['ATR'].iloc[-1] if 'ATR' in df.columns else row['Close'] * 0.005
 
     # --- LÓGICA DE SEÑALES ---
     tipo = "NEUTRAL"
@@ -41,58 +42,72 @@ def examinar_activo(df, ticker, categoria="GENERAL"):
     icono = "⚪"
     veredicto = "ESPERAR"
     motivo = "Sin tendencia clara"
-    prob_mostrar = prob # Variable para mostrar en el mensaje
+    prob_mostrar = prob
 
-    # CASO 1: ALCISTA (LONG)
+    # AJUSTE DE PRECISIÓN (SCALPING TIGHT)
+    # Multiplicadores reducidos para que el TP y SL estén más cerca del precio
+    factor_sl = 0.8  # Stop Loss ajustado (Antes 1.5)
+    factor_tp = 1.6  # Take Profit rápido (Antes 3.0)
+
     if prob > 0.50:
-        sl = row['Close'] - (atr * 1.5)
-        tp = row['Close'] + (atr * 3.0)
+        sl = row['Close'] - (atr * factor_sl)
+        tp = row['Close'] + (atr * factor_tp)
         tipo = "LONG (COMPRA)"
         icono = "🟢"
         prob_mostrar = prob
-        
         if prob > 0.60:
             señal = "FUERTE"
             veredicto = "ABRIR LONG 🚀"
-            motivo = f"IA detecta impulso alcista ({prob_mostrar*100:.0f}%)"
+            motivo = f"Impulso alcista detectado ({prob_mostrar*100:.0f}%)"
         else:
             señal = "MODERADA"
             veredicto = "POSIBLE REBOTE ↗️"
-            motivo = f"Probabilidad técnica favorable ({prob_mostrar*100:.0f}%)"
-
-    # CASO 2: BAJISTA (SHORT)
+            motivo = f"Técnicos favorables ({prob_mostrar*100:.0f}%)"
     else:
-        sl = row['Close'] + (atr * 1.5)
-        tp = row['Close'] - (atr * 3.0)
+        # En Short: SL arriba, TP abajo
+        sl = row['Close'] + (atr * factor_sl)
+        tp = row['Close'] - (atr * factor_tp)
         tipo = "SHORT (VENTA)"
         icono = "🔴"
-        # Invertimos la probabilidad para el mensaje: 16% subida -> 84% bajada
         prob_mostrar = 1.0 - prob
-        
         if prob < 0.40:
             señal = "FUERTE"
             veredicto = "ABRIR SHORT 📉"
-            motivo = f"IA detecta caída inminente ({prob_mostrar*100:.0f}%)"
+            motivo = f"Caída inminente detectada ({prob_mostrar*100:.0f}%)"
         else:
             señal = "MODERADA"
             veredicto = "POSIBLE CORRECCIÓN ↘️"
-            motivo = f"Debilidad técnica detectada ({prob_mostrar*100:.0f}%)"
+            motivo = f"Debilidad técnica ({prob_mostrar*100:.0f}%)"
 
     if tipo == "SHORT (VENTA)" and categoria == "ACCIONES":
         veredicto = "NO COMPRAR (BAJISTA) ❌"
         motivo = "Acción en tendencia bajista. Esperar."
 
-    # --- CORRECCIÓN DE DECIMALES Y JPY ---
-    if "JPY=X" in ticker:
+    # --- ETIQUETADO Y FORMATO ---
+    etiqueta = "GEN"
+    if categoria == "CRIPTO": etiqueta = "CRI"
+    elif categoria == "FOREX": etiqueta = "FOR"
+    elif categoria == "ACCIONES": etiqueta = "ACC"
+
+    nombre_broker = ticker.replace("-USD", "USD").replace("=X", "")
+    precio_actual = row['Close']
+    
+    # Lógica de decimales (SHIB, JPY, etc.)
+    if "JPY" in ticker:
         fmt = ",.3f"
-    elif any(x in ticker for x in ["COP", "CLP", "PYP"]):
+    elif any(x in ticker for x in ["COP", "CLP"]):
         fmt = ",.0f"
+    elif precio_actual < 0.001: 
+        fmt = ",.8f" # Para SHIB/PEPE
+    elif precio_actual < 1.0: 
+        fmt = ",.4f"
     else:
         fmt = ",.4f" if row['Close'] < 50 else ",.2f"
 
     info = {
-        "ticker": ticker,
-        "precio": format(row['Close'], fmt),
+        "ticker": nombre_broker,
+        "mercado": etiqueta,
+        "precio": format(precio_actual, fmt),
         "sl": format(sl, fmt),
         "tp": format(tp, fmt),
         "rsi": f"{row['RSI']:.1f}",
