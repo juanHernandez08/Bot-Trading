@@ -53,6 +53,8 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # IA INTERPRETA
         data = interpretar_intencion(texto)
+        if not est: 
+            est = "SCALPING"
         acc = data.get("accion", "CHARLA")
         tick = data.get("ticker")
         lst = data.get("lista_activos")
