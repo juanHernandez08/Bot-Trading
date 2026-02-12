@@ -27,7 +27,7 @@ async def analizar_activo_completo(ticker, estilo, categoria):
     df, backup_mode = await descargar_datos(ticker, estilo)
     if df is None or df.empty: return None, 0.0
 
-    # 2. Analizar Estrategia (Calcula TP, SL y Motivo)
+    # 2. Analizar Estrategia (Calcula TP, SL, Motivo y Mercado)
     info, prob = examinar_activo(df, ticker, categoria)
     
     # 3. Empaquetar resultado
@@ -88,7 +88,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if info:
                     encontrados = True
                     reporte += (
-                        f"💎 **{info['ticker']}**\n"
+                        f"💎 **{info['ticker']}** ({info.get('mercado', 'GEN')})\n"
                         f"💰 ${info['precio']} | {info['tipo_operacion']} {info['icono']}\n"
                         f"🎯 TP: ${info['tp']} | ⛔ SL: ${info['sl']}\n"
                         f"📝 _{info.get('motivo', 'Análisis técnico')}_\n"
@@ -123,12 +123,12 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         if es_long or es_short:
                             hay = True
-                            # Usamos la señal que ya viene calculada de strategy.py
                             fuerza_texto = info.get('señal', 'MODERADA') 
                             icono = "🔥" if fuerza_texto == "FUERTE" else "⚠️"
+                            etiqueta = info.get('mercado', 'GEN')
                             
                             reporte += (
-                                f"{icono} **{info['ticker']}** ({c[:3]})\n"
+                                f"{icono} **{info['ticker']}** ({etiqueta})\n"
                                 f"💰 ${info['precio']} | {info['veredicto']}\n"
                                 f"🎯 TP: ${info['tp']}\n"
                                 f"⛔ SL: ${info['sl']}\n" 
@@ -153,7 +153,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 aviso_modo = " | ⚠️ DIARIO" if info['backup'] else f" | {est.upper()}"
                 
                 tarjeta = (
-                    f"💎 **{info['ticker']}**{aviso_modo}\n"
+                    f"💎 **{info['ticker']}** ({info.get('mercado', 'GEN')}){aviso_modo}\n"
                     f"💵 **Precio:** `${info['precio']}`\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"💡 **CONCLUSIÓN:**\n"
@@ -162,8 +162,8 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"📝 **Análisis:** _{info.get('motivo', '')}_\n"
                     f"🤖 **IA:** _{razon_ia}_\n\n"
                     f"🛡️ **Gestión de Riesgo:**\n"
-                    f"⛔ Stop Loss: `${info['sl']}`\n"
-                    f"🎯 Take Profit: `${info['tp']}`\n"
+                    f"⛔ SL: `${info['sl']}`\n"
+                    f"🎯 TP: `${info['tp']}`\n"
                     f"📉 RSI: `{info['rsi']}`"
                 )
                 await msg_espera.delete()
@@ -196,16 +196,18 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: pass
         await update.message.reply_text("⚠️ Ocurrió un error interno.")
 
-# --- 🚀 CAZADOR AUTOMÁTICO (MODO SENSIBLE) 🚀 ---
+# --- 🚀 CAZADOR AUTOMÁTICO (SOLO FOREX) 🚀 ---
 async def cazador_automatico(context: ContextTypes.DEFAULT_TYPE):
     """
-    Escanea periódicamente (cada 30 min) buscando oportunidades > 53% prob.
+    Escanea periódicamente buscando oportunidades.
+    CONFIGURADO SOLO PARA FOREX (FOR).
     """
     global TELEGRAM_CHAT_ID
     if not TELEGRAM_CHAT_ID: return
     
-    categorias = ["CRIPTO", "FOREX"] 
-    print("🕵️‍♂️ Cazador Sensible Buscando...")
+    # ⚠️ SOLO FOREX
+    categorias = ["FOREX"] 
+    print("🕵️‍♂️ Cazador de Divisas (FOREX) Buscando...")
     
     for cat in categorias:
         candidatos = await escanear_mercado(cat, "SCALPING")
@@ -213,20 +215,20 @@ async def cazador_automatico(context: ContextTypes.DEFAULT_TYPE):
             info, prob = await analizar_activo_completo(t, "SCALPING", cat)
             
             if info:
-                # Filtros de Sensibilidad
+                # Filtros de Sensibilidad para Scalping
                 es_long = prob > 0.53
-                es_short = (prob < 0.47 and cat in ['FOREX', 'CRIPTO'])
+                es_short = prob < 0.47 
                 
                 if es_long or es_short:
-                    # Usamos los datos ya formateados en strategy.py
                     titulo = info['tipo_operacion'] 
                     icono = info['icono']
                     fuerza = info['señal']
                     motivo = info.get('motivo', 'Patrón técnico detectado')
+                    etiqueta = info.get('mercado', 'GEN')
                     
                     mensaje = (
-                        f"{icono} **ALERTA: {titulo}**\n"
-                        f"💎 Activo: **{info['ticker']}**\n"
+                        f"{icono} **ALERTA AUTOMÁTICA: {titulo}**\n"
+                        f"💎 Activo: **{info['ticker']}** ({etiqueta})\n"
                         f"📊 Señal: **{fuerza}**\n"
                         f"📝 Porqué: _{motivo}_\n"
                         f"━━━━━━━━━━━━━━━━━━\n"
@@ -253,5 +255,5 @@ if __name__ == '__main__':
         # Tarea automática: Cazador cada 30 minutos (1800 segundos)
         app.job_queue.run_repeating(cazador_automatico, interval=1800, first=30)
         
-    print("🤖 BOT CAZADOR SENSIBLE ACTIVO 🚀")
+    print("🤖 BOT CAZADOR ACTIVO (SOLO FOREX + ETIQUETAS) 🚀")
     app.run_polling()
