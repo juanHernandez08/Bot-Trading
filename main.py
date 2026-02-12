@@ -20,24 +20,14 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 ARCHIVO_CARTERA = 'cartera.json'
 
-# --- AHORA PASAMOS EL ESTILO A LA ESTRATEGIA ---
 async def analizar_activo_completo(ticker, estilo, categoria):
     df, backup_mode = await descargar_datos(ticker, estilo)
     if df is None or df.empty: return None, 0.0
-    # Aquí pasamos 'estilo' para que strategy sepa qué lógica usar
     info, prob = examinar_activo(df, ticker, estilo, categoria)
     if info:
         info['backup'] = backup_mode
         return info, prob
     return None, 0.0
-
-def cargar_cartera():
-    try: return json.load(open(ARCHIVO_CARTERA)) if os.path.exists(ARCHIVO_CARTERA) else []
-    except: return []
-
-def guardar_cartera(d):
-    try: json.dump(d, open(ARCHIVO_CARTERA, 'w'))
-    except: pass
 
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
@@ -54,11 +44,11 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lst = data.get("lista_activos")
         est = data.get("estilo")
         cat = data.get("categoria", "GENERAL") 
-        explicacion = data.get("explicacion")
         
         if not est: est = "SCALPING"
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
 
+        # 1. COMPARAR
         if acc == "COMPARAR" and lst:
             await msg_espera.edit_text(f"⚖️ **Comparando...**")
             reporte = f"📊 **Estrategia** | {est}\n━━━━━━━━━━━━━━━━━━\n"
@@ -67,9 +57,13 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 info, prob, = await analizar_activo_completo(t, est, cat)
                 if info:
                     encontrados = True
+                    # Feedback visual de neutralidad
+                    icono = info['icono']
+                    if info['tipo_operacion'] == "NEUTRAL": icono = "⚪"
+                    
                     reporte += (
                         f"💎 **{info['ticker']}** ({info.get('mercado', 'GEN')})\n"
-                        f"💰 ${info['precio']} | {info['tipo_operacion']} {info['icono']}\n"
+                        f"💰 ${info['precio']} | {info['tipo_operacion']} {icono}\n"
                         f"🎯 TP: ${info['tp']} | ⛔ SL: ${info['sl']}\n"
                         f"📝 _{info.get('motivo', '')}_\n\n"
                     )
@@ -77,6 +71,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if encontrados: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
             else: await update.message.reply_text("❌ Sin datos.")
 
+        # 2. RECOMENDAR (MEGA ESCÁNER)
         elif acc == "RECOMENDAR":
             cats = ["CRIPTO", "FOREX", "ACCIONES"] if cat == "GENERAL" else [cat]
             await msg_espera.edit_text(f"🌎 **Escaneando {cat} ({est})...**")
@@ -91,24 +86,28 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     try:
                         info, prob = await analizar_activo_completo(t, est, c)
                         if info:
-                            es_long = prob > 0.53
-                            es_short = prob < 0.47
-                            if es_long or es_short:
-                                hay = True
-                                icono = "🔥" if info.get('señal') in ["FUERTE", "GOLDEN"] else "⚡"
-                                reporte += (
-                                    f"{icono} **{info['ticker']}** ({info.get('mercado', 'GEN')})\n"
-                                    f"💰 ${info['precio']} | {info['veredicto']}\n"
-                                    f"🎯 TP: ${info['tp']}\n"
-                                    f"⛔ SL: ${info['sl']}\n" 
-                                    f"📝 _{info.get('motivo', '')}_\n\n"
-                                )
+                            # --- FILTRO ANTI-RUIDO (EL CAMBIO IMPORTANTE) ---
+                            # Si es NEUTRAL, lo ignoramos completamente.
+                            if info['tipo_operacion'] == "NEUTRAL":
+                                continue
+
+                            # Si pasa el filtro, es porque es LONG o SHORT válido
+                            hay = True
+                            icono = "🔥" if info.get('señal') in ["FUERTE", "GOLDEN"] else "⚡"
+                            reporte += (
+                                f"{icono} **{info['ticker']}** ({info.get('mercado', 'GEN')})\n"
+                                f"💰 ${info['precio']} | {info['veredicto']}\n"
+                                f"🎯 TP: ${info['tp']}\n"
+                                f"⛔ SL: ${info['sl']}\n" 
+                                f"📝 _{info.get('motivo', '')}_\n\n"
+                            )
                     except: continue 
             
             await msg_espera.delete()
             if hay: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
-            else: await update.message.reply_text(f"💤 Sin entradas claras en {cat} ({est}).")
+            else: await update.message.reply_text(f"💤 Mercado lateral en {cat}. Sin entradas confirmadas.")
 
+        # 3. ANALIZAR INDIVIDUAL
         elif acc == "ANALIZAR" and tick:
             await msg_espera.edit_text(f"🔎 **Calculando {tick}...**")
             info, prob = await analizar_activo_completo(tick, est, cat)
@@ -141,13 +140,12 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: pass
         await update.message.reply_text(error_msg, parse_mode=ParseMode.MARKDOWN)
 
-# --- CAZADOR AUTOMÁTICO (DOBLE PASADA) ---
+# --- CAZADOR AUTOMÁTICO ---
 async def cazador_automatico(context: ContextTypes.DEFAULT_TYPE):
     global TELEGRAM_CHAT_ID
     if not TELEGRAM_CHAT_ID: return
     
     categorias = ["FOREX"]
-    # Escaneamos AMBOS estilos
     estilos_a_buscar = ["SCALPING", "SWING"]
     
     for estilo in estilos_a_buscar:
@@ -157,26 +155,24 @@ async def cazador_automatico(context: ContextTypes.DEFAULT_TYPE):
                 for t in candidatos:
                     info, prob = await analizar_activo_completo(t, estilo, cat)
                     if info:
-                        # Filtros:
-                        # Scalping: Prob > 53% / < 47%
-                        # Swing: Prob > 65% / < 35% (Más exigente)
-                        es_oportunidad = False
-                        if estilo == "SCALPING" and (prob > 0.53 or prob < 0.47): es_oportunidad = True
-                        if estilo == "SWING" and (prob > 0.65 or prob < 0.35): es_oportunidad = True
+                        # --- FILTRO SUPREMO ---
+                        # Solo notificamos si NO es Neutral
+                        if info['tipo_operacion'] == "NEUTRAL":
+                            continue
 
-                        if es_oportunidad:
-                            titulo = "OPORTUNIDAD DE ORO" if estilo == "SWING" else "ALERTA SCALPING"
-                            emoji = "🏆" if estilo == "SWING" else "⚡"
-                            
-                            mensaje = (
-                                f"{emoji} **{titulo} ({info['tipo_operacion']})**\n"
-                                f"💎 **{info['ticker']}** ({info.get('mercado','GEN')})\n"
-                                f"📝 _{info.get('motivo', '')}_\n"
-                                f"💰 Ent: `${info['precio']}`\n"
-                                f"🎯 TP: `${info['tp']}` | ⛔ SL: `${info['sl']}`"
-                            )
-                            try: await context.bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=mensaje, parse_mode=ParseMode.MARKDOWN)
-                            except: pass
+                        # Si llegamos aquí, es una oportunidad real
+                        titulo = "OPORTUNIDAD DE ORO" if estilo == "SWING" else "ALERTA SCALPING"
+                        emoji = "🏆" if estilo == "SWING" else "⚡"
+                        
+                        mensaje = (
+                            f"{emoji} **{titulo} ({info['tipo_operacion']})**\n"
+                            f"💎 **{info['ticker']}** ({info.get('mercado','GEN')})\n"
+                            f"📝 _{info.get('motivo', '')}_\n"
+                            f"💰 Ent: `${info['precio']}`\n"
+                            f"🎯 TP: `${info['tp']}` | ⛔ SL: `${info['sl']}`"
+                        )
+                        try: await context.bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=mensaje, parse_mode=ParseMode.MARKDOWN)
+                        except: pass
             except: pass
 
 if __name__ == '__main__':
