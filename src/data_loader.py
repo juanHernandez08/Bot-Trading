@@ -104,3 +104,11 @@ async def descargar_datos(ticker, estilo="SCALPING"):
     except Exception as e:
         print(f"❌ Error en data_loader: {e}")
         return None, False
+# --- FUNCIÓN FALTANTE (AGREGAR AL FINAL) ---
+def normalizar_ticker(ticker):
+    """
+    Función de compatibilidad para que brain.py no falle.
+    Usa el mismo diccionario de traducción.
+    """
+    ticker = ticker.upper().strip()
+    return ALIAS_CRIPTO.get(ticker, ticker)
