@@ -8,18 +8,21 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
+# --- IMPORTACIONES ---
 from src.data_loader import descargar_datos 
 from src.strategy import examinar_activo
 from src.brain import interpretar_intencion, generar_resumen_humano
 from src.scanner import escanear_mercado
 
+# --- CONFIGURACIÓN ---
 load_dotenv()
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-ARCHIVO_CARTERA = 'cartera.json'
+ARCHIVO_CARTERA = 'cartera.json' # (Opcional, por si lo usas a futuro)
 
+# --- FUNCIÓN AUXILIAR ---
 async def analizar_activo_completo(ticker, estilo, categoria):
     df, backup_mode = await descargar_datos(ticker, estilo)
     if df is None or df.empty: return None, 0.0
@@ -29,6 +32,7 @@ async def analizar_activo_completo(ticker, estilo, categoria):
         return info, prob
     return None, 0.0
 
+# --- CEREBRO PRINCIPAL ---
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
     global TELEGRAM_CHAT_ID
@@ -42,13 +46,19 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         acc = data.get("accion", "CHARLA")
         tick = data.get("ticker")
         lst = data.get("lista_activos")
+        
+        # Corrección de Estilo (Por defecto SCALPING)
         est = data.get("estilo")
+        if not est: est = "SCALPING"
+        
         cat = data.get("categoria", "GENERAL") 
         
-        if not est: est = "SCALPING"
+        # Ajuste: Si dice "Analiza" pero no da activo, es recomendación
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
 
-        # 1. COMPARAR
+        # ---------------------------------------------------------
+        # BLOQUE 1: COMPARAR (Varias monedas a la vez)
+        # ---------------------------------------------------------
         if acc == "COMPARAR" and lst:
             await msg_espera.edit_text(f"⚖️ **Comparando...**")
             reporte = f"📊 **Estrategia** | {est}\n━━━━━━━━━━━━━━━━━━\n"
@@ -57,7 +67,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 info, prob, = await analizar_activo_completo(t, est, cat)
                 if info:
                     encontrados = True
-                    # Feedback visual de neutralidad
+                    # Feedback visual si es neutral
                     icono = info['icono']
                     if info['tipo_operacion'] == "NEUTRAL": icono = "⚪"
                     
@@ -69,9 +79,11 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
             await msg_espera.delete()
             if encontrados: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
-            else: await update.message.reply_text("❌ Sin datos.")
+            else: await update.message.reply_text("❌ No encontré datos para comparar.")
 
-        # 2. RECOMENDAR (MEGA ESCÁNER)
+        # ---------------------------------------------------------
+        # BLOQUE 2: RECOMENDAR (El Escáner)
+        # ---------------------------------------------------------
         elif acc == "RECOMENDAR":
             cats = ["CRIPTO", "FOREX", "ACCIONES"] if cat == "GENERAL" else [cat]
             await msg_espera.edit_text(f"🌎 **Escaneando {cat} ({est})...**")
@@ -86,12 +98,9 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     try:
                         info, prob = await analizar_activo_completo(t, est, c)
                         if info:
-                            # --- FILTRO ANTI-RUIDO (EL CAMBIO IMPORTANTE) ---
-                            # Si es NEUTRAL, lo ignoramos completamente.
-                            if info['tipo_operacion'] == "NEUTRAL":
-                                continue
+                            # --- FILTRO IMPORTANTE: SILENCIAR NEUTRALES ---
+                            if info['tipo_operacion'] == "NEUTRAL": continue
 
-                            # Si pasa el filtro, es porque es LONG o SHORT válido
                             hay = True
                             icono = "🔥" if info.get('señal') in ["FUERTE", "GOLDEN"] else "⚡"
                             reporte += (
@@ -105,13 +114,17 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await msg_espera.delete()
             if hay: await update.message.reply_text(reporte, parse_mode=ParseMode.MARKDOWN)
-            else: await update.message.reply_text(f"💤 Mercado lateral en {cat}. Sin entradas confirmadas.")
+            else: await update.message.reply_text(f"💤 Mercado lateral en {cat}. Sin entradas claras.")
 
-        # 3. ANALIZAR INDIVIDUAL
+        # ---------------------------------------------------------
+        # BLOQUE 3: ANALIZAR (Un solo activo)
+        # ---------------------------------------------------------
         elif acc == "ANALIZAR" and tick:
             await msg_espera.edit_text(f"🔎 **Calculando {tick}...**")
             info, prob = await analizar_activo_completo(tick, est, cat)
+            
             if info:
+                # Aquí generamos la explicación humana
                 razon_ia = generar_resumen_humano(f"RSI:{info['rsi']} Motivo:{info.get('motivo')}", prob)
                 tarjeta = (
                     f"💎 **{info['ticker']}** ({info.get('mercado', 'GEN')})\n"
@@ -129,6 +142,9 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await msg_espera.delete()
                 await update.message.reply_text(f"❌ No pude leer datos de {tick}.")
         
+        # ---------------------------------------------------------
+        # BLOQUE 4: GREETING / ERROR
+        # ---------------------------------------------------------
         else:
             await msg_espera.delete()
             await update.message.reply_text("👋 Hola. Prueba 'Oportunidades Forex' o 'Analiza BTC'.")
@@ -145,22 +161,20 @@ async def cazador_automatico(context: ContextTypes.DEFAULT_TYPE):
     global TELEGRAM_CHAT_ID
     if not TELEGRAM_CHAT_ID: return
     
+    # Solo escaneamos FOREX en automático
     categorias = ["FOREX"]
-    estilos_a_buscar = ["SCALPING", "SWING"]
+    estilos = ["SCALPING", "SWING"]
     
-    for estilo in estilos_a_buscar:
+    for estilo in estilos:
         for cat in categorias:
             try:
                 candidatos = await escanear_mercado(cat, estilo)
                 for t in candidatos:
                     info, prob = await analizar_activo_completo(t, estilo, cat)
                     if info:
-                        # --- FILTRO SUPREMO ---
-                        # Solo notificamos si NO es Neutral
-                        if info['tipo_operacion'] == "NEUTRAL":
-                            continue
+                        # Si es Neutral, NO molestamos
+                        if info['tipo_operacion'] == "NEUTRAL": continue
 
-                        # Si llegamos aquí, es una oportunidad real
                         titulo = "OPORTUNIDAD DE ORO" if estilo == "SWING" else "ALERTA SCALPING"
                         emoji = "🏆" if estilo == "SWING" else "⚡"
                         
@@ -180,4 +194,5 @@ if __name__ == '__main__':
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), manejar_mensaje))
     if app.job_queue: app.job_queue.run_repeating(cazador_automatico, interval=1800, first=30)
+    print("🤖 BOT HÍBRIDO (SCALPING + SWING) INICIADO 🚀")
     app.run_polling()
