@@ -25,18 +25,14 @@ class Predictor:
 def examinar_activo(df, ticker, estilo="SCALPING", categoria="GENERAL"):
     if df is None or df.empty: return None, 0.0
 
-    # 1. CÁLCULO DE TODOS LOS INDICADORES
-    # Para Scalping
+    # 1. CÁLCULO DE INDICADORES
     df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
-    # Para Swing (Golden)
     df['SMA_200'] = df['Close'].rolling(window=200).mean()
     df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
     
-    # --- CORRECCIÓN DEL ERROR ---
-    # Antes: df.fillna(method='bfill', inplace=True)
-    # Ahora (Compatible con Pandas nuevo):
-    df = df.bfill()
+    # --- CORRECCIÓN PANDAS (MODERNO) ---
+    df = df.bfill() # Reemplaza al antiguo fillna(method='bfill')
 
     # 2. IA
     prob = 0.5
@@ -49,12 +45,12 @@ def examinar_activo(df, ticker, estilo="SCALPING", categoria="GENERAL"):
     precio = row['Close']
     rsi = row['RSI']
     
-    # Estructura de mercado (Mínimos/Máximos recientes)
+    # Estructura de mercado
     min_reciente = df['Low'].iloc[-5:-1].min()
     max_reciente = df['High'].iloc[-5:-1].max()
     atr = df['ATR'].iloc[-1] if 'ATR' in df.columns else precio * 0.005
 
-    # --- VARIABLES POR DEFECTO ---
+    # Variables por defecto
     tipo = "NEUTRAL"
     señal = "RANGO"
     icono = "⚪"
@@ -63,79 +59,63 @@ def examinar_activo(df, ticker, estilo="SCALPING", categoria="GENERAL"):
     prob_mostrar = prob
     sl, tp = precio, precio
 
-    # ==========================================================
-    # ⚡ MODALIDAD 1: SCALPING (Rápido, EMA 9/21, Ratio 1.5)
-    # ==========================================================
+    # === LÓGICA SCALPING ===
     if estilo == "SCALPING":
         ratio = 1.5
         ema_9 = row['EMA_9']
         ema_21 = row['EMA_21']
 
-        # LONG SCALPING
         if prob > 0.55 and ema_9 > ema_21 and precio > ema_9 and rsi < 70:
             sl = min_reciente
             if (precio - sl) < (precio * 0.0005): sl = precio * 0.9995
             riesgo = precio - sl
             tp = precio + (riesgo * ratio)
-            
             tipo = "LONG (COMPRA)"
             icono = "🟢"
-            prob_mostrar = prob
             señal = "SCALPING"
             veredicto = "SCALPING LONG ⚡"
             motivo = f"Momentum (EMA 9>21) ({prob*100:.0f}%)"
 
-        # SHORT SCALPING
         elif prob < 0.45 and ema_9 < ema_21 and precio < ema_9 and rsi > 30:
             sl = max_reciente
             if (sl - precio) < (precio * 0.0005): sl = precio * 1.0005
             riesgo = sl - precio
             tp = precio - (riesgo * ratio)
-            
             tipo = "SHORT (VENTA)"
             icono = "🔴"
-            prob_mostrar = 1.0 - prob
             señal = "SCALPING"
             veredicto = "SCALPING SHORT ⚡"
             motivo = f"Momentum (EMA 9<21) ({prob_mostrar*100:.0f}%)"
 
-    # ==========================================================
-    # 🏆 MODALIDAD 2: SWING (Oportunidad de Oro, SMA 200, Ratio 2.0)
-    # ==========================================================
+    # === LÓGICA SWING ===
     elif estilo == "SWING":
         sma_200 = row['SMA_200']
         ema_50 = row['EMA_50']
-        # SL y TP más amplios basados en ATR
         sl_dist = atr * 2.0
-        tp_dist = atr * 4.0 
+        tp_dist = atr * 4.0
 
-        # LONG GOLDEN
         if prob > 0.65 and precio > sma_200 and precio > ema_50 and rsi < 65:
             sl = precio - sl_dist
             tp = precio + tp_dist
             tipo = "LONG (COMPRA)"
             icono = "🟢"
-            prob_mostrar = prob
             señal = "GOLDEN"
             veredicto = "OPORTUNIDAD DE ORO 🚀"
-            motivo = f"Tendencia Mayor Alcista (SMA 200) ({prob*100:.0f}%)"
+            motivo = f"Tendencia Mayor Alcista ({prob*100:.0f}%)"
 
-        # SHORT GOLDEN
         elif prob < 0.35 and precio < sma_200 and precio < ema_50 and rsi > 35:
             sl = precio + sl_dist
             tp = precio - tp_dist
             tipo = "SHORT (VENTA)"
             icono = "🔴"
-            prob_mostrar = 1.0 - prob
             señal = "GOLDEN"
             veredicto = "OPORTUNIDAD DE ORO 📉"
-            motivo = f"Tendencia Mayor Bajista (SMA 200) ({prob_mostrar*100:.0f}%)"
+            motivo = f"Tendencia Mayor Bajista ({prob_mostrar*100:.0f}%)"
 
     if tipo == "SHORT (VENTA)" and categoria == "ACCIONES":
         veredicto = "NO COMPRAR (BAJISTA) ❌"
-        motivo = "Acción bajista."
 
-    # --- FORMATO ---
+    # Formato
     etiqueta = "GEN"
     if categoria == "CRIPTO": etiqueta = "CRI"
     elif categoria == "FOREX": etiqueta = "FOR"
