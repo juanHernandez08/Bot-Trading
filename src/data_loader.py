@@ -3,13 +3,12 @@ import pandas as pd
 import pandas_ta as ta
 
 # --- DICCIONARIO DE TRADUCCIÓN ---
-# Esto obliga al bot a entender tus criptos favoritas
 ALIAS_CRIPTO = {
     "BTC": "BTC-USD",
     "BITCOIN": "BTC-USD",
     "ETH": "ETH-USD",
     "ETHEREUM": "ETH-USD",
-    "SOL": "SOL-USD",   # <--- AQUÍ ESTÁ EL ARREGLO
+    "SOL": "SOL-USD",
     "SOLANA": "SOL-USD",
     "XRP": "XRP-USD",
     "RIPPLE": "XRP-USD",
@@ -33,25 +32,24 @@ ALIAS_CRIPTO = {
     "NASDAQ": "^IXIC"
 }
 
-async def descargar_datos(ticker, estilo="SCALPING"):
-    # 1. Limpieza y Traducción
+# --- FUNCIÓN QUE FALTABA (ESENCIAL PARA BRAIN.PY) ---
+def normalizar_ticker(ticker):
+    """
+    Convierte 'SOL' en 'SOL-USD' para que Yahoo Finance lo entienda.
+    Esta es la función que brain.py estaba buscando y no encontraba.
+    """
+    if not ticker: return None
     ticker = ticker.upper().strip()
-    
-    # Si está en el diccionario, usamos el nombre correcto
-    if ticker in ALIAS_CRIPTO:
-        ticker = ALIAS_CRIPTO[ticker]
-    
-    # Si parece cripto y no tiene -USD, probamos agregarlo
-    if estilo == "SCALPING" and "-" not in ticker and "=" not in ticker and len(ticker) <= 4:
-        # Intento inteligente: si falla luego, es culpa de Yahoo, pero esto ayuda
-        pass 
+    return ALIAS_CRIPTO.get(ticker, ticker)
 
-    print(f"📥 Descargando: {ticker}") # Log para ver qué busca
+async def descargar_datos(ticker, estilo="SCALPING"):
+    # 1. Usamos la función normalizar
+    ticker = normalizar_ticker(ticker)
+    
+    print(f"📥 Descargando: {ticker}")
 
     try:
-        # 2. Definir temporalidad según estilo
-        # Scalping = M15 (Últimos 5 días para tener mucha data)
-        # Swing = H1 (Últimos 60 días)
+        # 2. Configurar tiempos
         if estilo == "SCALPING":
             periodo = "5d"
             intervalo = "15m"
@@ -61,8 +59,9 @@ async def descargar_datos(ticker, estilo="SCALPING"):
 
         df = yf.download(ticker, period=periodo, interval=intervalo, progress=False)
 
+        # 3. Validación y Rescate
         if df is None or df.empty or len(df) < 20:
-            # INTENTO DE RESCATE: Si falló, probamos agregarle "-USD" si no lo tenía
+            # Si falla y no tiene guion, probamos agregar -USD por si acaso
             if "-" not in ticker and "=" not in ticker:
                 ticker_rescue = ticker + "-USD"
                 print(f"⚠️ Reintentando con: {ticker_rescue}")
@@ -71,13 +70,13 @@ async def descargar_datos(ticker, estilo="SCALPING"):
             else:
                 return None, False
 
-        # 3. Limpieza de datos (Multi-Index fix para Yahoo nuevo)
+        # 4. Limpieza (Yahoo Fix)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         
         df = df.dropna()
         
-        # 4. Cálculo de Indicadores Técnicos
+        # 5. Indicadores Técnicos (Usando pandas_ta)
         # RSI
         df['RSI'] = ta.rsi(df['Close'], length=14)
         
@@ -92,10 +91,10 @@ async def descargar_datos(ticker, estilo="SCALPING"):
         df['Lower'] = bb['BBL_20_2.0']
         df['Volatilidad'] = (df['Upper'] - df['Lower']) / df['Close']
         
-        # ATR (Average True Range) para Stop Loss profesionales
+        # ATR (Stop Loss)
         df['ATR'] = ta.atr(df['High'], df['Low'], df['Close'], length=14)
 
-        # Target (Para la IA)
+        # Target IA
         df['Target'] = (df['Close'].shift(-1) > df['Close']).astype(int)
         
         df = df.dropna()
@@ -104,11 +103,3 @@ async def descargar_datos(ticker, estilo="SCALPING"):
     except Exception as e:
         print(f"❌ Error en data_loader: {e}")
         return None, False
-# --- FUNCIÓN FALTANTE (AGREGAR AL FINAL) ---
-def normalizar_ticker(ticker):
-    """
-    Función de compatibilidad para que brain.py no falle.
-    Usa el mismo diccionario de traducción.
-    """
-    ticker = ticker.upper().strip()
-    return ALIAS_CRIPTO.get(ticker, ticker)
