@@ -59,13 +59,10 @@ client = discord.Client(intents=intents)
 # ==========================================================
 class BotonesTrading(View):
     def __init__(self, ticker, tipo_operacion):
-        super().__init__(timeout=None) # Los botones no expiran
+        super().__init__(timeout=None)
         self.ticker = ticker
-        
-        # Formatear el ticker para Bybit (ej. de BTCUSD a BTC/USDT)
         self.simbolo_broker = self.ticker.replace("-USD", "/USDT").replace("USD", "/USDT")
         
-        # Crear los botones dinámicamente según la señal
         if "LONG" in tipo_operacion or "COMPRA" in tipo_operacion:
             btn = Button(label=f"🟢 Ejecutar COMPRA a {LOTAJE_ACTUAL} lotes", style=discord.ButtonStyle.success)
             btn.callback = self.ejecutar_compra
@@ -86,13 +83,10 @@ class BotonesTrading(View):
             await interaction.response.send_message("❌ Error: API de Bybit no configurada o caída.", ephemeral=True)
             return
 
-        # 'ephemeral=True' hace que solo tú veas la confirmación, manteniendo el canal limpio
         await interaction.response.defer(ephemeral=True) 
 
         try:
-            # Enviar la orden de mercado al broker
             orden = broker.create_market_order(self.simbolo_broker, side, LOTAJE_ACTUAL)
-            
             msg_exito = (
                 f"✅ **¡OPERACIÓN EJECUTADA CON ÉXITO!**\n"
                 f"🏦 **Broker:** Bybit Testnet\n"
@@ -128,44 +122,37 @@ async def on_message(message):
         return
 
     texto = message.content
-    msg_espera = await message.channel.send("⏳ **Analizando...**")
-    
-    try:
-        data = interpretar_intencion(texto)
-        acc = data.get("accion", "CHARLA")
-        # 🧪 COMANDO SECRETO DE PRUEBA
-        if texto.lower() == "probar botones":
-            embed = discord.Embed(
-                title="🧪 PRUEBA DE CONEXIÓN BYBIT",
-                description="Simulación forzada para probar el Brazo Robótico.",
-                color=discord.Color.blue()
-            )
-            # Forzamos que se cree un botón verde (COMPRA) de BTC
-            vista = BotonesTrading("BTC-USD", "COMPRA") 
-            await message.channel.send(embed=embed, view=vista)
-            return
 
-        # 🧪 COMANDO DE DIAGNÓSTICO PROFUNDO
-        if texto.lower() == "diagnostico":
-            key = os.getenv("BYBIT_API_KEY", "")
-            secret = os.getenv("BYBIT_API_SECRET", "")
-            
-            if not key or not secret:
-                await message.channel.send("❌ **ERROR CRÍTICO:** Railway no está leyendo las variables. Están vacías.")
-                return
-            
-            # Ocultamos la mayor parte por seguridad, solo mostramos las puntas
-            key_oculta = f"{key[:4]}...{key[-4:]}" if len(key) >= 8 else key
-            
-            msg = (
-                f"🔍 **DIAGNÓSTICO DE VARIABLES EN RAILWAY**\n"
-                f"🔑 **API Key leída:** `{key_oculta}`\n"
-                f"📏 **Longitud de la Key:** `{len(key)}` caracteres (Deberían ser 18)\n"
-                f"📏 **Longitud del Secret:** `{len(secret)}` caracteres (Deberían ser 36)\n"
-            )
-            await message.channel.send(msg)
+    # 🧪 COMANDO SECRETO DE PRUEBA
+    if texto.lower() == "probar botones":
+        embed = discord.Embed(
+            title="🧪 PRUEBA DE CONEXIÓN BYBIT",
+            description="Simulación forzada para probar el Brazo Robótico.",
+            color=discord.Color.blue()
+        )
+        vista = BotonesTrading("BTC-USD", "COMPRA") 
+        await message.channel.send(embed=embed, view=vista)
+        return
+
+    # 🧪 COMANDO DE DIAGNÓSTICO PROFUNDO
+    if texto.lower() == "diagnostico":
+        key = os.getenv("BYBIT_API_KEY", "")
+        secret = os.getenv("BYBIT_API_SECRET", "")
         
-        # Test de conexión interna forzando limpieza de espacios (.strip)
+        if not key or not secret:
+            await message.channel.send("❌ **ERROR CRÍTICO:** Railway no está leyendo las variables. Están vacías.")
+            return
+            
+        key_oculta = f"{key[:4]}...{key[-4:]}" if len(key) >= 8 else key
+        
+        msg = (
+            f"🔍 **DIAGNÓSTICO DE VARIABLES EN RAILWAY**\n"
+            f"🔑 **API Key leída:** `{key_oculta}`\n"
+            f"📏 **Longitud de la Key:** `{len(key)}` caracteres (Deberían ser 18)\n"
+            f"📏 **Longitud del Secret:** `{len(secret)}` caracteres (Deberían ser 36)\n"
+        )
+        await message.channel.send(msg)
+        
         try:
             test_broker = ccxt.bybit({
                 'apiKey': key.strip(), 
@@ -178,6 +165,13 @@ async def on_message(message):
         except Exception as e:
             await message.channel.send(f"⚠️ **FALLÓ EL TEST INTERNO:**\n`{str(e)}`")
         return
+
+    # Si no es un comando de prueba, sigue el flujo normal
+    msg_espera = await message.channel.send("⏳ **Analizando...**")
+    
+    try:
+        data = interpretar_intencion(texto)
+        acc = data.get("accion", "CHARLA")
         tick = data.get("ticker")
         lst = data.get("lista_activos")
         
@@ -197,7 +191,7 @@ async def on_message(message):
         # 1. COMPARAR
         if acc == "COMPARAR" and lst:
             await msg_espera.edit(content=f"⚖️ **Comparando...**")
-            # ... (Lógica de comparar se mantiene igual) ...
+            # Logica de comparar
             await msg_espera.delete()
             await message.channel.send("Funcionalidad de comparar procesada.")
 
@@ -228,7 +222,6 @@ async def on_message(message):
                             embed.add_field(name="🎯 TP", value=f"`${info['tp']}`", inline=True)
                             embed.add_field(name="⛔ SL", value=f"`${info['sl']}`", inline=True)
                             
-                            # ✨ AGREGAMOS LA INTERFAZ DE BOTONES AL MENSAJE ✨
                             vista = BotonesTrading(info['ticker'], tipo)
                             await message.channel.send(embed=embed, view=vista)
                     except: continue 
@@ -259,7 +252,6 @@ async def on_message(message):
 
                 await msg_espera.delete()
                 
-                # Si no es neutral, le ponemos botones para operar
                 if "NEUTRAL" not in tipo:
                     vista = BotonesTrading(info['ticker'], tipo)
                     await message.channel.send(embed=embed, view=vista)
@@ -274,7 +266,7 @@ async def on_message(message):
             await message.channel.send("👋 Hola. Prueba 'Oportunidades Cripto' o 'Analiza BTC'.")
 
     except Exception as e:
-        print(traceback.format_exc()) 
+        print(traceback.format_exc()) # Imprime el error detallado en la consola de Railway
         try: await msg_espera.delete() 
         except: pass
         await message.channel.send(f"⚠️ **Error Técnico:**\n`{str(e)}`")
@@ -319,7 +311,6 @@ async def cazador_automatico():
                         embed.add_field(name="📝 Análisis", value=f"_{info.get('motivo', '')}_", inline=False)
                         embed.set_footer(text="Cazador FX • Algoritmo de Trading")
 
-                        # ✨ AGREGAMOS LA INTERFAZ DE BOTONES AL CAZADOR AUTOMÁTICO ✨
                         vista = BotonesTrading(info['ticker'], tipo)
                         try: await channel.send(embed=embed, view=vista)
                         except Exception as e: pass
