@@ -179,12 +179,15 @@ async def cazador_automatico():
                         titulo = "OPORTUNIDAD DE ORO" if estilo == "SWING" else "ALERTA SCALPING"
                         emoji = "🏆" if estilo == "SWING" else "⚡"
                         
+                        # ✨ AQUÍ ESTÁ LA MAGIA VISUAL (Separadores y saltos de línea) ✨
                         mensaje = (
+                            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                             f"{emoji} **{titulo} ({info['tipo_operacion']})**\n"
                             f"💎 **{info['ticker']}** ({info.get('mercado','GEN')})\n"
                             f"📝 _{info.get('motivo', '')}_\n"
                             f"💰 Ent: `${info['precio']}`\n"
-                            f"🎯 TP: `${info['tp']}` | ⛔ SL: `${info['sl']}`"
+                            f"🎯 TP: `${info['tp']}` | ⛔ SL: `${info['sl']}`\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" # Salto de línea extra al final
                         )
                         # Envía el mensaje a su canal correspondiente
                         try: await channel.send(mensaje)
