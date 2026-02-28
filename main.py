@@ -146,24 +146,24 @@ async def on_message(message):
             return
 
         # 🧪 COMANDO DE DIAGNÓSTICO PROFUNDO
-    if texto.lower() == "diagnostico":
-        key = os.getenv("BYBIT_API_KEY", "")
-        secret = os.getenv("BYBIT_API_SECRET", "")
-        
-        if not key or not secret:
-            await message.channel.send("❌ **ERROR CRÍTICO:** Railway no está leyendo las variables. Están vacías.")
-            return
+        if texto.lower() == "diagnostico":
+            key = os.getenv("BYBIT_API_KEY", "")
+            secret = os.getenv("BYBIT_API_SECRET", "")
             
-        # Ocultamos la mayor parte por seguridad, solo mostramos las puntas
-        key_oculta = f"{key[:4]}...{key[-4:]}" if len(key) >= 8 else key
-        
-        msg = (
-            f"🔍 **DIAGNÓSTICO DE VARIABLES EN RAILWAY**\n"
-            f"🔑 **API Key leída:** `{key_oculta}`\n"
-            f"📏 **Longitud de la Key:** `{len(key)}` caracteres (Deberían ser 18)\n"
-            f"📏 **Longitud del Secret:** `{len(secret)}` caracteres (Deberían ser 36)\n"
-        )
-        await message.channel.send(msg)
+            if not key or not secret:
+                await message.channel.send("❌ **ERROR CRÍTICO:** Railway no está leyendo las variables. Están vacías.")
+                return
+            
+            # Ocultamos la mayor parte por seguridad, solo mostramos las puntas
+            key_oculta = f"{key[:4]}...{key[-4:]}" if len(key) >= 8 else key
+            
+            msg = (
+                f"🔍 **DIAGNÓSTICO DE VARIABLES EN RAILWAY**\n"
+                f"🔑 **API Key leída:** `{key_oculta}`\n"
+                f"📏 **Longitud de la Key:** `{len(key)}` caracteres (Deberían ser 18)\n"
+                f"📏 **Longitud del Secret:** `{len(secret)}` caracteres (Deberían ser 36)\n"
+            )
+            await message.channel.send(msg)
         
         # Test de conexión interna forzando limpieza de espacios (.strip)
         try:
