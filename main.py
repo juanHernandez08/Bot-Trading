@@ -62,7 +62,11 @@ class BotonesTrading(View):
     def __init__(self, ticker, tipo_operacion):
         super().__init__(timeout=None)
         self.ticker = ticker
-        self.simbolo_broker = self.ticker.replace("-USD", "/USDT").replace("USD", "/USDT")
+        
+        # 🛠️ CORRECCIÓN DEL SÍMBOLO PARA BINANCE 🛠️
+        # Quitamos el guion si existe, y luego armamos el par correcto
+        ticker_limpio = self.ticker.replace("-", "") # Convierte BTC-USD en BTCUSD
+        self.simbolo_broker = ticker_limpio.replace("USD", "/USDT") # Convierte BTCUSD en BTC/USDT
         
         if "LONG" in tipo_operacion or "COMPRA" in tipo_operacion:
             btn = Button(label=f"🟢 Ejecutar COMPRA a {LOTAJE_ACTUAL} lotes", style=discord.ButtonStyle.success)
