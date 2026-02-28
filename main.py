@@ -144,6 +144,40 @@ async def on_message(message):
             vista = BotonesTrading("BTC-USD", "COMPRA") 
             await message.channel.send(embed=embed, view=vista)
             return
+
+        # 🧪 COMANDO DE DIAGNÓSTICO PROFUNDO
+    if texto.lower() == "diagnostico":
+        key = os.getenv("BYBIT_API_KEY", "")
+        secret = os.getenv("BYBIT_API_SECRET", "")
+        
+        if not key or not secret:
+            await message.channel.send("❌ **ERROR CRÍTICO:** Railway no está leyendo las variables. Están vacías.")
+            return
+            
+        # Ocultamos la mayor parte por seguridad, solo mostramos las puntas
+        key_oculta = f"{key[:4]}...{key[-4:]}" if len(key) >= 8 else key
+        
+        msg = (
+            f"🔍 **DIAGNÓSTICO DE VARIABLES EN RAILWAY**\n"
+            f"🔑 **API Key leída:** `{key_oculta}`\n"
+            f"📏 **Longitud de la Key:** `{len(key)}` caracteres (Deberían ser 18)\n"
+            f"📏 **Longitud del Secret:** `{len(secret)}` caracteres (Deberían ser 36)\n"
+        )
+        await message.channel.send(msg)
+        
+        # Test de conexión interna forzando limpieza de espacios (.strip)
+        try:
+            test_broker = ccxt.bybit({
+                'apiKey': key.strip(), 
+                'secret': secret.strip(),
+                'enableRateLimit': True,
+            })
+            test_broker.set_sandbox_mode(True)
+            balance = test_broker.fetch_balance()
+            await message.channel.send("✅ **¡TEST INTERNO EXITOSO!** El problema eran espacios ocultos. Conectado a Bybit Testnet.")
+        except Exception as e:
+            await message.channel.send(f"⚠️ **FALLÓ EL TEST INTERNO:**\n`{str(e)}`")
+        return
         tick = data.get("ticker")
         lst = data.get("lista_activos")
         
