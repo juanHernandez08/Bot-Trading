@@ -1,6 +1,6 @@
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
+import numpy as np
 
 # --- DICCIONARIO DE TRADUCCIÓN ---
 ALIAS_CRIPTO = {
@@ -32,24 +32,16 @@ ALIAS_CRIPTO = {
     "NASDAQ": "^IXIC"
 }
 
-# --- FUNCIÓN QUE FALTABA (ESENCIAL PARA BRAIN.PY) ---
 def normalizar_ticker(ticker):
-    """
-    Convierte 'SOL' en 'SOL-USD' para que Yahoo Finance lo entienda.
-    Esta es la función que brain.py estaba buscando y no encontraba.
-    """
     if not ticker: return None
     ticker = ticker.upper().strip()
     return ALIAS_CRIPTO.get(ticker, ticker)
 
 async def descargar_datos(ticker, estilo="SCALPING"):
-    # 1. Usamos la función normalizar
     ticker = normalizar_ticker(ticker)
-    
     print(f"📥 Descargando: {ticker}")
 
     try:
-        # 2. Configurar tiempos
         if estilo == "SCALPING":
             periodo = "5d"
             intervalo = "15m"
@@ -59,9 +51,7 @@ async def descargar_datos(ticker, estilo="SCALPING"):
 
         df = yf.download(ticker, period=periodo, interval=intervalo, progress=False)
 
-        # 3. Validación y Rescate
         if df is None or df.empty or len(df) < 20:
-            # Si falla y no tiene guion, probamos agregar -USD por si acaso
             if "-" not in ticker and "=" not in ticker:
                 ticker_rescue = ticker + "-USD"
                 print(f"⚠️ Reintentando con: {ticker_rescue}")
@@ -70,34 +60,50 @@ async def descargar_datos(ticker, estilo="SCALPING"):
             else:
                 return None, False
 
-        # 4. Limpieza (Yahoo Fix)
+        # Limpieza MultiIndex Yahoo
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         
         df = df.dropna()
-        
-        # 5. Indicadores Técnicos (Usando pandas_ta)
-        # RSI
-        df['RSI'] = ta.rsi(df['Close'], length=14)
-        
-        # MACD
-        macd = ta.macd(df['Close'])
-        df['MACD'] = macd['MACD_12_26_9']
-        df['Signal'] = macd['MACDs_12_26_9']
-        
-        # Bandas de Bollinger (Volatilidad)
-        bb = ta.bbands(df['Close'], length=20)
-        df['Upper'] = bb['BBU_20_2.0']
-        df['Lower'] = bb['BBL_20_2.0']
-        df['Volatilidad'] = (df['Upper'] - df['Lower']) / df['Close']
-        
-        # ATR (Stop Loss)
-        df['ATR'] = ta.atr(df['High'], df['Low'], df['Close'], length=14)
 
-        # Target IA
-        df['Target'] = (df['Close'].shift(-1) > df['Close']).astype(int)
+        # ==========================================================
+        # 🧮 CÁLCULO NATIVO DE INDICADORES (A PRUEBA DE FALLOS)
+        # ==========================================================
         
-        df = df.dropna()
+        # 1. RSI
+        delta = df['Close'].diff()
+        gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
+        loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+
+        # 2. MACD
+        ema12 = df['Close'].ewm(span=12, adjust=False).mean()
+        ema26 = df['Close'].ewm(span=26, adjust=False).mean()
+        df['MACD'] = ema12 - ema26
+        df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+
+        # 3. Bandas de Bollinger & Volatilidad
+        sma20 = df['Close'].rolling(window=20).mean()
+        std20 = df['Close'].rolling(window=20).std()
+        df['Upper'] = sma20 + (std20 * 2)
+        df['Lower'] = sma20 - (std20 * 2)
+        df['Volatilidad'] = (df['Upper'] - df['Lower']) / df['Close']
+
+        # 4. ATR (Average True Range para el Stop Loss)
+        high_low = df['High'] - df['Low']
+        high_close = np.abs(df['High'] - df['Close'].shift())
+        low_close = np.abs(df['Low'] - df['Close'].shift())
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = np.max(ranges, axis=1)
+        df['ATR'] = true_range.rolling(14).mean()
+
+        # 5. Target IA (Shift -1)
+        df['Target'] = (df['Close'].shift(-1) > df['Close']).astype(int)
+
+        # Llenar datos faltantes sin eliminar la vela actual (en vivo)
+        df = df.bfill().ffill()
+
         return df, False
 
     except Exception as e:
