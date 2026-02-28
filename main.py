@@ -133,6 +133,17 @@ async def on_message(message):
     try:
         data = interpretar_intencion(texto)
         acc = data.get("accion", "CHARLA")
+        # 🧪 COMANDO SECRETO DE PRUEBA
+        if texto.lower() == "probar botones":
+            embed = discord.Embed(
+                title="🧪 PRUEBA DE CONEXIÓN BYBIT",
+                description="Simulación forzada para probar el Brazo Robótico.",
+                color=discord.Color.blue()
+            )
+            # Forzamos que se cree un botón verde (COMPRA) de BTC
+            vista = BotonesTrading("BTC-USD", "COMPRA") 
+            await message.channel.send(embed=embed, view=vista)
+            return
         tick = data.get("ticker")
         lst = data.get("lista_activos")
         
