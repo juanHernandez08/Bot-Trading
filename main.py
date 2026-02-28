@@ -13,7 +13,7 @@ from src.scanner import escanear_mercado
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-
+LOTAJE_ACTUAL = 0.01
 # ==========================================================
 # 🏢 MAPA DEL CUARTEL GENERAL (TUS CANALES)
 # ==========================================================
