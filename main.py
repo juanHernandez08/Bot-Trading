@@ -64,6 +64,19 @@ async def on_message(message):
         cat = data.get("categoria", "GENERAL") 
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
 
+        data = interpretar_intencion(texto)
+        acc = data.get("accion", "CHARLA")
+        
+        # 🎛️ ACCIÓN: CONFIGURAR LOTE
+        if acc == "CONFIGURAR_LOTE":
+            global LOTAJE_ACTUAL
+            nuevo_lote = data.get("valor")
+            LOTAJE_ACTUAL = nuevo_lote
+            
+            await msg_espera.delete()
+            await message.channel.send(f"✅ **¡Entendido, socio!** \nHe actualizado mi memoria. A partir de ahora, ejecutaré las operaciones con **`{LOTAJE_ACTUAL}` lotes**.")
+            return # Terminamos aquí para que no intente analizar nada más
+        
         # 1. COMPARAR
         if acc == "COMPARAR" and lst:
             await msg_espera.edit(content=f"⚖️ **Comparando...**")
