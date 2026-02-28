@@ -1,4 +1,4 @@
-python-telegram-bot[job-queue]
+discord.py
 yfinance
 pandas
 pandas_ta
@@ -6,4 +6,3 @@ numpy
 scikit-learn
 python-dotenv
 openai
-
