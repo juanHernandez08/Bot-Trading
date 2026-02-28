@@ -13,7 +13,14 @@ if GROQ_API_KEY:
 
 def interpretar_intencion(msg):
     if not client: return {"accion": "CHARLA"}
+    # Convertimos a minúsculas para que sea más fácil buscar (usa tu variable msg)
+    mensaje_limpio = msg.lower()
     
+    # 🎛️ NUEVA INTENCIÓN: CONFIGURAR LOTE
+    if "lote" in mensaje_limpio or "lotaje" in mensaje_limpio:
+        numeros = re.findall(r"0\.\d+", mensaje_limpio)
+        if numeros:
+            return {"accion": "CONFIGURAR_LOTE", "valor": float(numeros[0])}
     # Prompt mejorado para detectar CATEGORÍAS
     prompt = f"""
     Analiza: "{msg}".
@@ -60,3 +67,4 @@ def generar_resumen_humano(datos_txt, prob):
         )
         return resp.choices[0].message.content.replace('"', '')
     except: return "Mercado volátil."
+
