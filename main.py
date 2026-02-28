@@ -152,21 +152,19 @@ async def on_message(message):
         await message.channel.send(f"⚠️ **Error Técnico:**\n`{str(e)}`")
 
 # ==========================================================
-# 🎯 EL CAZADOR AUTOMÁTICO (ENRUTADOR INTELIGENTE CON EMBEDS)
+# 🎯 EL CAZADOR AUTOMÁTICO (ENRUTADOR Y FILTRO ÉLITE)
 # ==========================================================
 @tasks.loop(minutes=30)
 async def cazador_automatico():
-    # Ahora el cazador escanea los 3 mercados
     categorias_a_escanear = ["FOREX", "CRIPTO", "ACCIONES"]
     estilos = ["SCALPING", "SWING"]
     
     for cat in categorias_a_escanear:
-        # Busca el canal correspondiente a esta categoría
         canal_id = CANALES_ALERTAS.get(cat)
         if not canal_id: continue
         
         channel = client.get_channel(canal_id)
-        if not channel: continue # Si el canal no existe, lo salta
+        if not channel: continue 
 
         for estilo in estilos:
             try:
@@ -175,39 +173,36 @@ async def cazador_automatico():
                     info, prob = await analizar_activo_completo(t, estilo, cat)
                     if info:
                         tipo = info.get('tipo_operacion', 'NEUTRAL')
-                        if tipo == "NEUTRAL": continue
+                        
+                        # ✨ EL NUEVO FILTRO DE FRANCOTIRADOR ✨
+                        # Bloquea todo lo que sea NEUTRAL o tenga menos del 60% de fuerza
+                        if tipo == "NEUTRAL" or prob < 60: 
+                            continue
 
                         titulo = "OPORTUNIDAD DE ORO" if estilo == "SWING" else "ALERTA SCALPING"
                         emoji = "🏆" if estilo == "SWING" else "⚡"
                         
-                        # ✨ LA MAGIA DEL EMBED ✨
-                        # 1. Definimos el color (Verde para LONG, Rojo para SHORT)
                         if "LONG" in tipo or "COMPRA" in tipo:
                             color_tarjeta = discord.Color.green()
                         else:
                             color_tarjeta = discord.Color.red()
 
-                        # 2. Creamos la estructura de la tarjeta
+                        # ✨ AHORA LA TARJETA MUESTRA EL PORCENTAJE DE FUERZA ✨
                         embed = discord.Embed(
                             title=f"{emoji} {titulo}",
-                            description=f"💎 **{info['ticker']}** ({info.get('mercado','GEN')}) ➔ **{tipo}**",
+                            description=f"💎 **{info['ticker']}** ({info.get('mercado','GEN')}) ➔ **{tipo}**\n💪 **Fuerza del Movimiento: {prob}%**",
                             color=color_tarjeta
                         )
 
-                        # 3. Agregamos las columnas (inline=True hace que se pongan una al lado de la otra)
                         embed.add_field(name="💰 Entrada", value=f"`${info['precio']}`", inline=True)
                         embed.add_field(name="🎯 Take Profit", value=f"`${info['tp']}`", inline=True)
                         embed.add_field(name="⛔ Stop Loss", value=f"`${info['sl']}`", inline=True)
                         
-                        # 4. Agregamos la razón en una fila completa abajo (inline=False)
                         embed.add_field(name="📝 Análisis", value=f"_{info.get('motivo', '')}_", inline=False)
-                        
-                        # 5. Un toque profesional al final de la tarjeta
                         embed.set_footer(text="Cazador FX • Algoritmo de Trading")
 
-                        # Envía el Embed al canal correspondiente
                         try: await channel.send(embed=embed)
-                        except Exception as e: print(f"Error enviando embed a Discord: {e}")
+                        except Exception as e: pass
             except Exception as e: 
                 pass
 
