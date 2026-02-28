@@ -81,7 +81,7 @@ class BotonesTrading(View):
 
     async def enviar_orden(self, interaction: discord.Interaction, side: str):
         if not broker:
-            await interaction.response.send_message("❌ Error: API de Bybit no configurada o caída.", ephemeral=True)
+            await interaction.response.send_message("❌ Error: API de Binance no configurada o caída.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True) 
@@ -97,7 +97,7 @@ class BotonesTrading(View):
             )
             await interaction.followup.send(msg_exito, ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"⚠️ **Error al ejecutar en Bybit:**\n`{str(e)}`", ephemeral=True)
+            await interaction.followup.send(f"⚠️ **Error al ejecutar en Binance:**\n`{str(e)}`", ephemeral=True)
 
 # ==========================================================
 # 🧠 LÓGICA PRINCIPAL DEL BOT
