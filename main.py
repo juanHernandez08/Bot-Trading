@@ -94,7 +94,7 @@ class BotonesTrading(View):
             orden = broker.create_market_order(self.simbolo_broker, side, LOTAJE_ACTUAL)
             msg_exito = (
                 f"✅ **¡OPERACIÓN EJECUTADA CON ÉXITO!**\n"
-                f"🏦 **Broker:** Bybit Testnet\n"
+                f"🏦 **Broker:** Binance Testnet\n"
                 f"💎 **Activo:** `{self.simbolo_broker}`\n"
                 f"⚖️ **Lote:** `{LOTAJE_ACTUAL}`\n"
                 f"🆔 **ID de Orden:** `{orden['id']}`"
