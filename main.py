@@ -168,20 +168,19 @@ async def on_message(message):
         return
 
     # 🎛️ COMANDO DIRECTO Y ESTRICTO: CONFIGURAR LOTE
-    if texto.lower().startswith("configurar lote"):
+   # 🎛️ COMANDO DIRECTO: EXTRACTOR DE LOTE (MÁS FLEXIBLE)
+    if "lote" in texto.lower():
         try:
-            partes = texto.split()
-            nuevo_lote = float(partes[2])
-            
-            global LOTAJE_ACTUAL
-            LOTAJE_ACTUAL = nuevo_lote
-            
-            await message.channel.send(f"✅ **¡Memoria actualizada, socio!** \nA partir de ahora, las operaciones se ejecutarán con **`{LOTAJE_ACTUAL}` lotes**.")
-            return
+            # Busca cualquier número (entero o decimal) dentro del mensaje
+            numeros = re.findall(r"[-+]?\d*\.\d+|\d+", texto)
+            if numeros:
+                nuevo_lote = float(numeros[0])
+                global LOTAJE_ACTUAL
+                LOTAJE_ACTUAL = nuevo_lote
+                await message.channel.send(f"✅ **¡Memoria actualizada, socio!** \nA partir de ahora, las operaciones se ejecutarán con **`{LOTAJE_ACTUAL}` lotes**.")
+                return
         except Exception as e:
-            await message.channel.send("⚠️ **Formato incorrecto.** Por favor escribe el comando así: `configurar lote 10`")
-            return
-
+            pass # Si falla, que siga el flujo normal
     # Si no es un comando de prueba, sigue el flujo normal
     msg_espera = await message.channel.send("⏳ **Analizando...**")
     
