@@ -352,7 +352,7 @@ async def before_cazador():
     await client.wait_until_ready()
 
 # --- NUEVO: MOTOR DE NOTICIAS (VERSIÓN ANTI-SPAM) ---
-@tasks.loop(hours=1)
+@tasks.loop(seconds=15)
 async def noticiero_automatico():
     canal_id = CANALES_ALERTAS.get("NOTICIAS")
     if not canal_id: return
