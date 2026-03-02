@@ -2,12 +2,13 @@ import os
 import asyncio
 import traceback
 import re
+import urllib.request
+import xml.etree.ElementTree as ET
 import discord
 from discord.ext import tasks
 from discord.ui import Button, View
 from dotenv import load_dotenv
 import ccxt
-import yfinance as yf  # <-- NUEVA LIBRERÍA PARA LAS NOTICIAS
 
 from src.data_loader import descargar_datos 
 from src.strategy import examinar_activo
@@ -22,6 +23,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 # 🧠 MEMORIA DEL BOT
 # ==========================================================
 LOTAJE_ACTUAL = 0.01
+rondas_vacias = {"FOREX": 0, "CRIPTO": 0, "ACCIONES": 0}
 
 # ==========================================================
 # 🏢 MAPA DEL CUARTEL GENERAL (TUS CANALES)
@@ -30,11 +32,9 @@ CANALES_ALERTAS = {
     "FOREX": 1477333205341180047,
     "CRIPTO": 1477333234768417004,
     "ACCIONES": 1477333258634006689,
-    "NOTICIAS": 1478135975136989294 # ⚠️ ¡CAMBIA ESTO POR EL ID DE TU CANAL NUEVO!
+    "NOTICIAS": 1234567890123456789, # ⚠️ ¡PON EL ID DE TU CANAL DE NOTICIAS AQUÍ!
+    "COMANDOS": 1234567890123456789  # ⚠️ ¡PON EL ID DE TU CANAL DE COMANDOS AQUÍ!
 }
-
-# Diccionario para rastrear inactividad del mercado
-rondas_vacias = {"FOREX": 0, "CRIPTO": 0, "ACCIONES": 0}
 
 # ==========================================================
 # 🔌 CONEXIÓN AL BROKER (OKX DEMO TRADING)
@@ -69,6 +69,7 @@ class BotonesTrading(View):
         self.ticker = ticker
         self.tipo_operacion = tipo_operacion
         
+        # Limpiamos las comas del texto antes de convertir a decimales
         self.precio = float(str(precio).replace(',', ''))
         self.tp = float(str(tp).replace(',', ''))
         self.sl = float(str(sl).replace(',', ''))
@@ -158,6 +159,14 @@ async def on_message(message):
     if message.author == client.user:
         return
 
+    # ==========================================================
+    # 🛡️ BARRERA DE SEGURIDAD (ACL): SOLO ESCUCHAR EN CANALES OFICIALES
+    # ==========================================================
+    canales_permitidos = list(CANALES_ALERTAS.values())
+    
+    if message.channel.id not in canales_permitidos:
+        return 
+
     texto = message.content
     texto_lower = texto.lower()
 
@@ -242,7 +251,6 @@ async def on_message(message):
                             
                             vista = BotonesTrading(info['ticker'], tipo, info['precio'], info['tp'], info['sl'])
                             
-                            # Enrutamiento Manual (Opcional, pero te lo dejo en el mismo canal para que lo veas al pedirlo)
                             await message.channel.send(embed=embed, view=vista)
                     except: continue 
             
@@ -342,7 +350,7 @@ async def cazador_automatico():
 async def before_cazador():
     await client.wait_until_ready()
 
-# --- NUEVO: MOTOR DE NOTICIAS ---
+# --- NUEVO: MOTOR DE NOTICIAS (VERSIÓN RSS ÉLITE) ---
 @tasks.loop(hours=1)
 async def noticiero_automatico():
     canal_id = CANALES_ALERTAS.get("NOTICIAS")
@@ -351,25 +359,43 @@ async def noticiero_automatico():
     if not channel: return
 
     try:
-        # Usamos el SPY (S&P 500) para obtener noticias clave de la economía global
-        ticker_mercado = yf.Ticker("SPY")
-        noticias = ticker_mercado.news[:3] # Tomamos las 3 más recientes
+        # 🌐 Usamos el RSS oficial de Yahoo Finance
+        url = "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SPY,BTC-USD&region=US&lang=en-US"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         
-        if noticias:
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, urllib.request.urlopen, req)
+        xml_data = await loop.run_in_executor(None, response.read)
+        
+        root = ET.fromstring(xml_data)
+        items = root.findall('./channel/item')[:3] 
+        
+        if items:
             embed = discord.Embed(
-                title="📰 Boletín Económico de la Hora",
+                title="📰 Boletín Económico y Cripto",
                 description="Últimos movimientos institucionales y noticias de impacto global.",
                 color=discord.Color.blue()
             )
-            for n in noticias:
-                titulo = n.get('title', 'Noticia de Mercado')
-                link = n.get('link', 'https://finance.yahoo.com')
-                editor = n.get('publisher', 'Fuente Financiera')
-                embed.add_field(name=f"🗞️ {editor}", value=f"[{titulo}]({link})", inline=False)
+            
+            for item in items:
+                titulo = item.find('title').text
+                link = item.find('link').text
+                desc_raw = item.find('description').text
+                
+                # Limpiamos HTML
+                desc_limpia = re.sub(r'<[^>]+>', '', desc_raw) if desc_raw else "Haz clic en el enlace para leer los detalles."
+                if len(desc_limpia) > 200:
+                    desc_limpia = desc_limpia[:197] + "..."
+                    
+                embed.add_field(
+                    name=f"🗞️ {titulo}", 
+                    value=f"{desc_limpia}\n[**👉 Leer noticia completa aquí**]({link})", 
+                    inline=False
+                )
             
             await channel.send(embed=embed)
     except Exception as e:
-        print(f"Error en noticias: {e}")
+        print(f"❌ Error en noticiero RSS: {e}")
 
 @noticiero_automatico.before_loop
 async def before_noticiero():
