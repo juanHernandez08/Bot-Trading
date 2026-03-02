@@ -32,8 +32,8 @@ CANALES_ALERTAS = {
     "FOREX": 1477333205341180047,
     "CRIPTO": 1477333234768417004,
     "ACCIONES": 1477333258634006689,
-    "NOTICIAS": 1234567890123456789, # ⚠️ ¡PON EL ID DE TU CANAL DE NOTICIAS AQUÍ!
-    "COMANDOS": 1234567890123456789  # ⚠️ ¡PON EL ID DE TU CANAL DE COMANDOS AQUÍ!
+    "NOTICIAS": 1478135975136989294, # ⚠️ ¡PON EL ID DE TU CANAL DE NOTICIAS AQUÍ!
+    "COMANDOS": 1477333703859634236  # ⚠️ ¡PON EL ID DE TU CANAL DE COMANDOS AQUÍ!
 }
 
 # ==========================================================
@@ -351,7 +351,7 @@ async def before_cazador():
     await client.wait_until_ready()
 
 # --- NUEVO: MOTOR DE NOTICIAS (VERSIÓN RSS ÉLITE) ---
-@tasks.loop(hours=1)
+@tasks.loop(seconds=15)
 async def noticiero_automatico():
     canal_id = CANALES_ALERTAS.get("NOTICIAS")
     if not canal_id: return
