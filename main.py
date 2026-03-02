@@ -1,7 +1,7 @@
 import os
-import re
 import asyncio
 import traceback
+import re
 import discord
 from discord.ext import tasks
 from discord.ui import Button, View
@@ -18,7 +18,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 # ==========================================================
-# 🧠 MEMORIA DEL BOT (Valor por defecto y seguro)
+# 🧠 MEMORIA DEL BOT
 # ==========================================================
 LOTAJE_ACTUAL = 0.01
 
@@ -155,9 +155,10 @@ async def on_message(message):
         return
 
     texto = message.content
+    texto_lower = texto.lower()
 
     # 🧪 COMANDO SECRETO DE PRUEBA
-    if texto.lower() == "probar botones":
+    if texto_lower == "probar botones":
         embed = discord.Embed(
             title="🧪 PRUEBA DE CONEXIÓN OKX",
             description="Simulación forzada para probar el Brazo Robótico.",
@@ -167,23 +168,69 @@ async def on_message(message):
         await message.channel.send(embed=embed, view=vista)
         return
 
-    # 🎛️ COMANDO DIRECTO Y ESTRICTO: CONFIGURAR LOTE
-   # 🎛️ COMANDO DIRECTO: EXTRACTOR DE LOTE (MÁS FLEXIBLE)
-    if "lote" in texto.lower():
-        try:
-            # Busca cualquier número (entero o decimal) dentro del mensaje
-            numeros = re.findall(r"[-+]?\d*\.\d+|\d+", texto)
-            if numeros:
+    # 🎛️ COMANDO DIRECTO: CONFIGURAR LOTE (MÁS FLEXIBLE CON REGEX)
+    if "lote" in texto_lower or "configurar" in texto_lower:
+        numeros = re.findall(r"[-+]?\d*\.\d+|\d+", texto)
+        if numeros and ("lote" in texto_lower):
+            try:
                 nuevo_lote = float(numeros[0])
                 global LOTAJE_ACTUAL
                 LOTAJE_ACTUAL = nuevo_lote
                 await message.channel.send(f"✅ **¡Memoria actualizada, socio!** \nA partir de ahora, las operaciones se ejecutarán con **`{LOTAJE_ACTUAL}` lotes**.")
                 return
-        except Exception as e:
-            pass # Si falla, que siga el flujo normal
-    # Si no es un comando de prueba, sigue el flujo normal
-    msg_espera = await message.channel.send("⏳ **Analizando...**")
-    
+            except Exception:
+                pass # Si falla, sigue de largo al cerebro de IA
+
+    msg_espera = await message.channel.send("⏳ **Procesando comando...**")
+
+    # 👁️ NUEVO COMANDO: VISUALIZAR (MODO RAYOS X - ESCÁNER GENERAL SIN FILTROS)
+    if texto_lower.startswith("visualizar"):
+        await msg_espera.edit(content="👁️ **Modo Rayos X: Escaneando todo el mercado en crudo...**")
+        
+        cats = ["CRIPTO", "FOREX", "ACCIONES"]
+        est = "SCALPING"
+        hay = False
+        
+        for c in cats:
+            try: 
+                candidatos = await escanear_mercado(c, est)
+            except: 
+                candidatos = []
+                
+            for t in candidatos:
+                try:
+                    info, prob = await analizar_activo_completo(t, est, c)
+                    # AQUÍ ESTÁ LA MAGIA: Muestra todo, sin importar si es Neutral o baja probabilidad
+                    if info:
+                        hay = True
+                        tipo_real = info.get('tipo_operacion', info.get('veredicto', 'NEUTRAL'))
+                        
+                        # Colores sin importar el filtro
+                        color_tarjeta = discord.Color.light_gray() if "NEUTRAL" in tipo_real else (discord.Color.green() if "COMPRA" in tipo_real or "LONG" in tipo_real else discord.Color.red())
+                        
+                        embed = discord.Embed(
+                            title=f"👁️ Rayos X en Crudo",
+                            description=f"💎 **{info['ticker']}** ➔ **{tipo_real}**\n💪 **Fuerza: {prob}%**\n🤖 IA: _{info.get('motivo', 'Análisis en crudo sin filtro')}_",
+                            color=color_tarjeta
+                        )
+                        embed.add_field(name="💰 Entrada", value=f"`${info['precio']}`", inline=True)
+                        embed.add_field(name="🎯 TP", value=f"`${info['tp']}`", inline=True)
+                        embed.add_field(name="⛔ SL", value=f"`${info['sl']}`", inline=True)
+                        
+                        # Forzamos un botón verde si es Neutral para que puedas presionar y probar la orden
+                        tipo_para_boton = "COMPRA" if "NEUTRAL" in tipo_real else tipo_real
+                        vista = BotonesTrading(info['ticker'], tipo_para_boton, info['precio'], info['tp'], info['sl'])
+                        
+                        await message.channel.send(embed=embed, view=vista)
+                except Exception as e: 
+                    continue 
+        
+        await msg_espera.delete()
+        if not hay: 
+            await message.channel.send("❌ No se encontraron activos en la lista.")
+        return
+
+    # Si no es visualizar ni lote, pasa por el cerebro de la IA
     try:
         data = interpretar_intencion(texto)
         acc = data.get("accion", "CHARLA")
@@ -200,7 +247,7 @@ async def on_message(message):
             await msg_espera.delete()
             await message.channel.send("Funcionalidad de comparar procesada.")
 
-        # 2. RECOMENDAR (Escáner Manual)
+        # 2. RECOMENDAR (Escáner Manual NORMAL CON FILTROS)
         elif acc == "RECOMENDAR":
             cats = ["CRIPTO", "FOREX", "ACCIONES"] if cat == "GENERAL" else [cat]
             await msg_espera.edit(content=f"🌎 **Escaneando {cat} ({est})...**")
@@ -234,7 +281,7 @@ async def on_message(message):
             await msg_espera.delete()
             if not hay: await message.channel.send(f"💤 Mercado lateral en {cat}. Sin entradas claras.")
 
-        # 3. ANALIZAR INDIVIDUAL
+        # 3. ANALIZAR INDIVIDUAL NORMAL
         elif acc == "ANALIZAR" and tick:
             await msg_espera.edit(content=f"🔎 **Calculando {tick}...**")
             info, prob = await analizar_activo_completo(tick, est, cat)
