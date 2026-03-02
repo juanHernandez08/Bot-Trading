@@ -24,6 +24,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 # ==========================================================
 LOTAJE_ACTUAL = 0.01
 rondas_vacias = {"FOREX": 0, "CRIPTO": 0, "ACCIONES": 0}
+noticias_enviadas = set()
 
 # ==========================================================
 # 🏢 MAPA DEL CUARTEL GENERAL (TUS CANALES)
@@ -350,8 +351,8 @@ async def cazador_automatico():
 async def before_cazador():
     await client.wait_until_ready()
 
-# --- NUEVO: MOTOR DE NOTICIAS (VERSIÓN RSS ÉLITE) ---
-@tasks.loop(seconds=15)
+# --- NUEVO: MOTOR DE NOTICIAS (VERSIÓN ANTI-SPAM) ---
+@tasks.loop(hours=1)
 async def noticiero_automatico():
     canal_id = CANALES_ALERTAS.get("NOTICIAS")
     if not canal_id: return
@@ -359,7 +360,7 @@ async def noticiero_automatico():
     if not channel: return
 
     try:
-        # 🌐 Usamos el RSS oficial de Yahoo Finance
+        # 🌐 Agregador Institucional (Reuters, Bloomberg, CNBC, etc.)
         url = "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SPY,BTC-USD&region=US&lang=en-US"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         
@@ -368,21 +369,37 @@ async def noticiero_automatico():
         xml_data = await loop.run_in_executor(None, response.read)
         
         root = ET.fromstring(xml_data)
-        items = root.findall('./channel/item')[:3] 
+        items = root.findall('./channel/item')
         
-        if items:
+        nuevas_noticias = []
+        global noticias_enviadas
+        
+        # 🧠 FILTRO DE DEDUPLICACIÓN
+        for item in items:
+            link = item.find('link').text
+            if link not in noticias_enviadas:
+                nuevas_noticias.append(item)
+                noticias_enviadas.add(link)
+                if len(nuevas_noticias) == 3: # Tomamos máximo las 3 más frescas
+                    break
+                    
+        # Limpieza de memoria (para no saturar la RAM del servidor en Railway)
+        if len(noticias_enviadas) > 100:
+            noticias_enviadas.clear()
+        
+        # 🚀 SOLO ENVÍA MENSAJE SI HAY NOTICIAS NUEVAS
+        if nuevas_noticias:
             embed = discord.Embed(
                 title="📰 Boletín Económico y Cripto",
                 description="Últimos movimientos institucionales y noticias de impacto global.",
                 color=discord.Color.blue()
             )
             
-            for item in items:
+            for item in nuevas_noticias:
                 titulo = item.find('title').text
                 link = item.find('link').text
                 desc_raw = item.find('description').text
                 
-                # Limpiamos HTML
                 desc_limpia = re.sub(r'<[^>]+>', '', desc_raw) if desc_raw else "Haz clic en el enlace para leer los detalles."
                 if len(desc_limpia) > 200:
                     desc_limpia = desc_limpia[:197] + "..."
@@ -394,6 +411,7 @@ async def noticiero_automatico():
                 )
             
             await channel.send(embed=embed)
+            
     except Exception as e:
         print(f"❌ Error en noticiero RSS: {e}")
 
