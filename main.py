@@ -32,21 +32,23 @@ CANALES_ALERTAS = {
 }
 
 # ==========================================================
-# 🔌 CONEXIÓN AL BROKER (BYBIT TESTNET)
+# 🔌 CONEXIÓN AL BROKER (OKX DEMO TRADING)
 # ==========================================================
-BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
-BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
+OKX_API_KEY = os.getenv("OKX_API_KEY")
+OKX_API_SECRET = os.getenv("OKX_API_SECRET")
+OKX_PASSWORD = os.getenv("OKX_PASSWORD")
 
 try:
-    broker = ccxt.bybit({
-        'apiKey': BYBIT_API_KEY,
-        'secret': BYBIT_API_SECRET,
+    broker = ccxt.okx({
+        'apiKey': OKX_API_KEY,
+        'secret': OKX_API_SECRET,
+        'password': OKX_PASSWORD,
         'enableRateLimit': True,
     })
-    broker.set_sandbox_mode(True) # ¡CRÍTICO! Esto activa el dinero de prueba
-    print("✅ Conexión a Bybit Testnet ESTABLECIDA.")
+    broker.set_sandbox_mode(True) # Activa el modo Demo
+    print("✅ Conexión a OKX Demo ESTABLECIDA.")
 except Exception as e:
-    print(f"❌ Error al conectar con Bybit: {e}")
+    print(f"❌ Error al conectar con OKX: {e}")
     broker = None
 
 # Configuramos los permisos de Discord
@@ -62,7 +64,7 @@ class BotonesTrading(View):
         super().__init__(timeout=None)
         self.ticker = ticker
         
-        # 🛠️ CORRECCIÓN DEL SÍMBOLO PARA BINANCE 🛠️
+        # 🛠️ CORRECCIÓN DEL SÍMBOLO PARA Bybit 🛠️
         # Quitamos el guion si existe, y luego armamos el par correcto
         ticker_limpio = self.ticker.replace("-", "") # Convierte BTC-USD en BTCUSD
         self.simbolo_broker = ticker_limpio.replace("USD", "/USDT") # Convierte BTCUSD en BTC/USDT
@@ -84,7 +86,7 @@ class BotonesTrading(View):
 
     async def enviar_orden(self, interaction: discord.Interaction, side: str):
         if not broker:
-            await interaction.response.send_message("❌ Error: API de Binance no configurada o caída.", ephemeral=True)
+            await interaction.response.send_message("❌ Error: API de Bybit no configurada o caída.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True) 
@@ -93,14 +95,14 @@ class BotonesTrading(View):
             orden = broker.create_market_order(self.simbolo_broker, side, LOTAJE_ACTUAL)
             msg_exito = (
                 f"✅ **¡OPERACIÓN EJECUTADA CON ÉXITO!**\n"
-                f"🏦 **Broker:** Binance Testnet\n"
+                f"🏦 **Broker:**  Testnet\n"
                 f"💎 **Activo:** `{self.simbolo_broker}`\n"
                 f"⚖️ **Lote:** `{LOTAJE_ACTUAL}`\n"
                 f"🆔 **ID de Orden:** `{orden['id']}`"
             )
             await interaction.followup.send(msg_exito, ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"⚠️ **Error al ejecutar en Binance:**\n`{str(e)}`", ephemeral=True)
+            await interaction.followup.send(f"⚠️ **Error al ejecutar en Bybit:**\n`{str(e)}`", ephemeral=True)
 
 # ==========================================================
 # 🧠 LÓGICA PRINCIPAL DEL BOT
