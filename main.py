@@ -168,6 +168,22 @@ async def on_message(message):
             description="Simulación forzada para probar el Brazo Robótico.",
             color=discord.Color.blue()
         )
+
+        # 🎛️ COMANDO DIRECTO Y ESTRICTO: CONFIGURAR LOTE
+    if texto.lower().startswith("configurar lote"):
+        try:
+            # Extrae el número de la frase (ej: "configurar lote 10" -> 10.0)
+            partes = texto.split()
+            nuevo_lote = float(partes[2])
+            
+            global LOTAJE_ACTUAL
+            LOTAJE_ACTUAL = nuevo_lote
+            
+            await message.channel.send(f"✅ **¡Memoria actualizada, socio!** \nA partir de ahora, las operaciones se ejecutarán con **`{LOTAJE_ACTUAL}` lotes**.")
+            return
+        except Exception as e:
+            await message.channel.send("⚠️ **Formato incorrecto.** Por favor escribe el comando así: `configurar lote 10`")
+            return
         # Pasamos los 5 datos: Ticker, Tipo, Precio, TP, SL
         vista = BotonesTrading("BTC-USD", "COMPRA", 60000.0, 62000.0, 59000.0) 
         await message.channel.send(embed=embed, view=vista)
