@@ -1,7 +1,6 @@
 import os
 import asyncio
 import traceback
-import re
 import discord
 from discord.ext import tasks
 from discord.ui import Button, View
@@ -45,7 +44,7 @@ try:
         'password': OKX_PASSWORD,
         'enableRateLimit': True,
     })
-    broker.set_sandbox_mode(True) # Activa el modo Demo
+    broker.set_sandbox_mode(True) # ¡CRÍTICO! Esto activa el dinero de prueba
     print("✅ Conexión a OKX Demo ESTABLECIDA.")
 except Exception as e:
     print(f"❌ Error al conectar con OKX: {e}")
@@ -57,18 +56,18 @@ intents.message_content = True
 client = discord.Client(intents=intents)
 
 # ==========================================================
-# 🎛️ INTERFAZ DE USUARIO: BOTONES INTERACTIVOS
+# 🎛️ INTERFAZ DE USUARIO: BOTONES INTERACTIVOS Y GESTIÓN DE RIESGO
 # ==========================================================
 class BotonesTrading(View):
     def __init__(self, ticker, tipo_operacion, precio, tp, sl):
         super().__init__(timeout=None)
         self.ticker = ticker
         self.tipo_operacion = tipo_operacion
-        self.precio = precio
-        self.tp = tp
-        self.sl = sl
+        self.precio = float(precio)
+        self.tp = float(tp)
+        self.sl = float(sl)
         
-        # Limpiar el ticker para OKX
+        # Formatear el ticker para OKX (ej. de BTC-USD a BTC/USDT)
         ticker_limpio = self.ticker.replace("-", "")
         self.simbolo_broker = ticker_limpio.replace("USD", "/USDT")
         
@@ -89,21 +88,22 @@ class BotonesTrading(View):
 
     async def enviar_orden(self, interaction: discord.Interaction, side: str):
         if not broker:
-            await interaction.response.send_message("❌ Error: API de OKX no configurada.", ephemeral=True)
+            await interaction.response.send_message("❌ Error: API de OKX no configurada o caída.", ephemeral=True)
             return
 
+        # 'ephemeral=True' hace que solo tú veas la confirmación
         await interaction.response.defer(ephemeral=True) 
 
         try:
             # 🧮 1. CÁLCULOS FINANCIEROS
-            costo_usdt = float(LOTAJE_ACTUAL) * float(self.precio)
-            ganancia_usdt = abs(float(self.tp) - float(self.precio)) * float(LOTAJE_ACTUAL)
-            riesgo_usdt = abs(float(self.precio) - float(self.sl)) * float(LOTAJE_ACTUAL)
+            costo_usdt = float(LOTAJE_ACTUAL) * self.precio
+            ganancia_usdt = abs(self.tp - self.precio) * float(LOTAJE_ACTUAL)
+            riesgo_usdt = abs(self.precio - self.sl) * float(LOTAJE_ACTUAL)
 
             # 🛡️ 2. PARÁMETROS DE PROTECCIÓN (TP/SL)
             parametros_extra = {
-                'takeProfit': {'triggerPrice': float(self.tp)},
-                'stopLoss': {'triggerPrice': float(self.sl)}
+                'takeProfit': {'triggerPrice': self.tp},
+                'stopLoss': {'triggerPrice': self.sl}
             }
 
             # 🚀 3. ENVIAR LA ORDEN PROTEGIDA
@@ -128,12 +128,13 @@ class BotonesTrading(View):
                 f"🎯 **Take Profit:** `${self.tp}` ➔ _(Ganancia est.: +${ganancia_usdt:.2f})_\n"
                 f"⛔ **Stop Loss:** `${self.sl}` ➔ _(Riesgo est.: -${riesgo_usdt:.2f})_\n"
                 f"---\n"
-                f"🆔 **ID de Orden:** `{orden['id']}`\n"
+                f"🆔 **ID de Orden:** `{orden.get('id', 'N/A')}`\n"
                 f"🛡️ _Protección automática enviada al broker._"
             )
             await interaction.followup.send(msg_exito, ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"⚠️ **Error al ejecutar en OKX:**\n`{str(e)}`", ephemeral=True)
+
 # ==========================================================
 # 🧠 LÓGICA PRINCIPAL DEL BOT
 # ==========================================================
@@ -162,44 +163,13 @@ async def on_message(message):
     # 🧪 COMANDO SECRETO DE PRUEBA
     if texto.lower() == "probar botones":
         embed = discord.Embed(
-            title="🧪 PRUEBA DE CONEXIÓN BYBIT",
+            title="🧪 PRUEBA DE CONEXIÓN OKX",
             description="Simulación forzada para probar el Brazo Robótico.",
             color=discord.Color.blue()
         )
+        # Pasamos los 5 datos: Ticker, Tipo, Precio, TP, SL
         vista = BotonesTrading("BTC-USD", "COMPRA", 60000.0, 62000.0, 59000.0) 
         await message.channel.send(embed=embed, view=vista)
-        return
-
-    # 🧪 COMANDO DE DIAGNÓSTICO PROFUNDO
-    if texto.lower() == "diagnostico":
-        key = os.getenv("BYBIT_API_KEY", "")
-        secret = os.getenv("BYBIT_API_SECRET", "")
-        
-        if not key or not secret:
-            await message.channel.send("❌ **ERROR CRÍTICO:** Railway no está leyendo las variables. Están vacías.")
-            return
-            
-        key_oculta = f"{key[:4]}...{key[-4:]}" if len(key) >= 8 else key
-        
-        msg = (
-            f"🔍 **DIAGNÓSTICO DE VARIABLES EN RAILWAY**\n"
-            f"🔑 **API Key leída:** `{key_oculta}`\n"
-            f"📏 **Longitud de la Key:** `{len(key)}` caracteres (Deberían ser 18)\n"
-            f"📏 **Longitud del Secret:** `{len(secret)}` caracteres (Deberían ser 36)\n"
-        )
-        await message.channel.send(msg)
-        
-        try:
-            test_broker = ccxt.bybit({
-                'apiKey': key.strip(), 
-                'secret': secret.strip(),
-                'enableRateLimit': True,
-            })
-            test_broker.set_sandbox_mode(True)
-            balance = test_broker.fetch_balance()
-            await message.channel.send("✅ **¡TEST INTERNO EXITOSO!** El problema eran espacios ocultos. Conectado a Bybit Testnet.")
-        except Exception as e:
-            await message.channel.send(f"⚠️ **FALLÓ EL TEST INTERNO:**\n`{str(e)}`")
         return
 
     # Si no es un comando de prueba, sigue el flujo normal
@@ -258,7 +228,8 @@ async def on_message(message):
                             embed.add_field(name="🎯 TP", value=f"`${info['tp']}`", inline=True)
                             embed.add_field(name="⛔ SL", value=f"`${info['sl']}`", inline=True)
                             
-                            vista = BotonesTrading("BTC-USD", "COMPRA", 60000.0, 62000.0, 59000.0)
+                            # Pasamos los 5 datos dinámicos a los botones
+                            vista = BotonesTrading(info['ticker'], tipo, info['precio'], info['tp'], info['sl'])
                             await message.channel.send(embed=embed, view=vista)
                     except: continue 
             
@@ -289,6 +260,7 @@ async def on_message(message):
                 await msg_espera.delete()
                 
                 if "NEUTRAL" not in tipo:
+                    # Pasamos los 5 datos dinámicos a los botones
                     vista = BotonesTrading(info['ticker'], tipo, info['precio'], info['tp'], info['sl'])
                     await message.channel.send(embed=embed, view=vista)
                 else:
@@ -329,7 +301,8 @@ async def cazador_automatico():
                     info, prob = await analizar_activo_completo(t, estilo, cat)
                     if info:
                         tipo = info.get('tipo_operacion', 'NEUTRAL')
-                        if tipo == "NEUTRAL" or prob < 50: 
+                        # 🔥 FILTRO BAJADO AL 40% PARA VER MÁS SEÑALES 🔥
+                        if tipo == "NEUTRAL" or prob < 40: 
                             continue
 
                         titulo = "OPORTUNIDAD DE ORO" if estilo == "SWING" else "ALERTA SCALPING"
@@ -347,6 +320,7 @@ async def cazador_automatico():
                         embed.add_field(name="📝 Análisis", value=f"_{info.get('motivo', '')}_", inline=False)
                         embed.set_footer(text="Cazador FX • Algoritmo de Trading")
 
+                        # Pasamos los 5 datos dinámicos a los botones
                         vista = BotonesTrading(info['ticker'], tipo, info['precio'], info['tp'], info['sl'])
                         try: await channel.send(embed=embed, view=vista)
                         except Exception as e: pass
