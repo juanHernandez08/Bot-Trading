@@ -63,9 +63,10 @@ class BotonesTrading(View):
         super().__init__(timeout=None)
         self.ticker = ticker
         self.tipo_operacion = tipo_operacion
-        self.precio = float(precio)
-        self.tp = float(tp)
-        self.sl = float(sl)
+        # 🛠️ CORRECCIÓN: Limpiamos las comas del texto antes de convertir a decimales
+        self.precio = float(str(precio).replace(',', ''))
+        self.tp = float(str(tp).replace(',', ''))
+        self.sl = float(str(sl).replace(',', ''))
         
         # Formatear el ticker para OKX (ej. de BTC-USD a BTC/USDT)
         ticker_limpio = self.ticker.replace("-", "")
