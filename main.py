@@ -60,14 +60,17 @@ client = discord.Client(intents=intents)
 # 🎛️ INTERFAZ DE USUARIO: BOTONES INTERACTIVOS
 # ==========================================================
 class BotonesTrading(View):
-    def __init__(self, ticker, tipo_operacion):
+    def __init__(self, ticker, tipo_operacion, precio, tp, sl):
         super().__init__(timeout=None)
         self.ticker = ticker
+        self.tipo_operacion = tipo_operacion
+        self.precio = precio
+        self.tp = tp
+        self.sl = sl
         
-        # 🛠️ CORRECCIÓN DEL SÍMBOLO PARA Bybit 🛠️
-        # Quitamos el guion si existe, y luego armamos el par correcto
-        ticker_limpio = self.ticker.replace("-", "") # Convierte BTC-USD en BTCUSD
-        self.simbolo_broker = ticker_limpio.replace("USD", "/USDT") # Convierte BTCUSD en BTC/USDT
+        # Limpiar el ticker para OKX
+        ticker_limpio = self.ticker.replace("-", "")
+        self.simbolo_broker = ticker_limpio.replace("USD", "/USDT")
         
         if "LONG" in tipo_operacion or "COMPRA" in tipo_operacion:
             btn = Button(label=f"🟢 Ejecutar COMPRA a {LOTAJE_ACTUAL} lotes", style=discord.ButtonStyle.success)
@@ -86,24 +89,51 @@ class BotonesTrading(View):
 
     async def enviar_orden(self, interaction: discord.Interaction, side: str):
         if not broker:
-            await interaction.response.send_message("❌ Error: API de Bybit no configurada o caída.", ephemeral=True)
+            await interaction.response.send_message("❌ Error: API de OKX no configurada.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True) 
 
         try:
-            orden = broker.create_market_order(self.simbolo_broker, side, LOTAJE_ACTUAL)
+            # 🧮 1. CÁLCULOS FINANCIEROS
+            costo_usdt = float(LOTAJE_ACTUAL) * float(self.precio)
+            ganancia_usdt = abs(float(self.tp) - float(self.precio)) * float(LOTAJE_ACTUAL)
+            riesgo_usdt = abs(float(self.precio) - float(self.sl)) * float(LOTAJE_ACTUAL)
+
+            # 🛡️ 2. PARÁMETROS DE PROTECCIÓN (TP/SL)
+            parametros_extra = {
+                'takeProfit': {'triggerPrice': float(self.tp)},
+                'stopLoss': {'triggerPrice': float(self.sl)}
+            }
+
+            # 🚀 3. ENVIAR LA ORDEN PROTEGIDA
+            orden = broker.create_market_order(
+                symbol=self.simbolo_broker, 
+                side=side, 
+                amount=LOTAJE_ACTUAL,
+                params=parametros_extra
+            )
+            
+            # Intentar obtener el precio real de ejecución, sino usar el estimado
+            precio_ejecutado = orden.get('average', orden.get('price', self.precio))
+            if precio_ejecutado is None: precio_ejecutado = self.precio
+
             msg_exito = (
-                f"✅ **¡OPERACIÓN EJECUTADA CON ÉXITO!**\n"
-                f"🏦 **Broker:**  Testnet\n"
-                f"💎 **Activo:** `{self.simbolo_broker}`\n"
-                f"⚖️ **Lote:** `{LOTAJE_ACTUAL}`\n"
-                f"🆔 **ID de Orden:** `{orden['id']}`"
+                f"✅ **¡OPERACIÓN INSTITUCIONAL EJECUTADA!**\n"
+                f"🏦 **Broker:** OKX Testnet\n"
+                f"💎 **Activo:** `{self.simbolo_broker}` | **Posición:** `{'LONG 🟢' if side == 'buy' else 'SHORT 🔴'}`\n"
+                f"💸 **Capital Comprometido:** `~${costo_usdt:.2f} USDT`\n"
+                f"⚖️ **Lote:** `{LOTAJE_ACTUAL}` | 💵 **Entrada:** `${precio_ejecutado}`\n"
+                f"---\n"
+                f"🎯 **Take Profit:** `${self.tp}` ➔ _(Ganancia est.: +${ganancia_usdt:.2f})_\n"
+                f"⛔ **Stop Loss:** `${self.sl}` ➔ _(Riesgo est.: -${riesgo_usdt:.2f})_\n"
+                f"---\n"
+                f"🆔 **ID de Orden:** `{orden['id']}`\n"
+                f"🛡️ _Protección automática enviada al broker._"
             )
             await interaction.followup.send(msg_exito, ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"⚠️ **Error al ejecutar en Bybit:**\n`{str(e)}`", ephemeral=True)
-
+            await interaction.followup.send(f"⚠️ **Error al ejecutar en OKX:**\n`{str(e)}`", ephemeral=True)
 # ==========================================================
 # 🧠 LÓGICA PRINCIPAL DEL BOT
 # ==========================================================
@@ -136,7 +166,7 @@ async def on_message(message):
             description="Simulación forzada para probar el Brazo Robótico.",
             color=discord.Color.blue()
         )
-        vista = BotonesTrading("BTC-USD", "COMPRA") 
+        vista = BotonesTrading("BTC-USD", "COMPRA", 60000.0, 62000.0, 59000.0) 
         await message.channel.send(embed=embed, view=vista)
         return
 
@@ -228,7 +258,7 @@ async def on_message(message):
                             embed.add_field(name="🎯 TP", value=f"`${info['tp']}`", inline=True)
                             embed.add_field(name="⛔ SL", value=f"`${info['sl']}`", inline=True)
                             
-                            vista = BotonesTrading(info['ticker'], tipo)
+                            vista = BotonesTrading("BTC-USD", "COMPRA", 60000.0, 62000.0, 59000.0)
                             await message.channel.send(embed=embed, view=vista)
                     except: continue 
             
@@ -259,7 +289,7 @@ async def on_message(message):
                 await msg_espera.delete()
                 
                 if "NEUTRAL" not in tipo:
-                    vista = BotonesTrading(info['ticker'], tipo)
+                    vista = BotonesTrading(info['ticker'], tipo, info['precio'], info['tp'], info['sl'])
                     await message.channel.send(embed=embed, view=vista)
                 else:
                     await message.channel.send(embed=embed)
@@ -317,7 +347,7 @@ async def cazador_automatico():
                         embed.add_field(name="📝 Análisis", value=f"_{info.get('motivo', '')}_", inline=False)
                         embed.set_footer(text="Cazador FX • Algoritmo de Trading")
 
-                        vista = BotonesTrading(info['ticker'], tipo)
+                        vista = BotonesTrading(info['ticker'], tipo, info['precio'], info['tp'], info['sl'])
                         try: await channel.send(embed=embed, view=vista)
                         except Exception as e: pass
             except Exception as e: 
