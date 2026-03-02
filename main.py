@@ -329,7 +329,7 @@ async def cazador_automatico():
                     info, prob = await analizar_activo_completo(t, estilo, cat)
                     if info:
                         tipo = info.get('tipo_operacion', 'NEUTRAL')
-                        if tipo == "NEUTRAL" or prob < 60: 
+                        if tipo == "NEUTRAL" or prob < 50: 
                             continue
 
                         titulo = "OPORTUNIDAD DE ORO" if estilo == "SWING" else "ALERTA SCALPING"
