@@ -44,13 +44,12 @@ try:
         'password': OKX_PASSWORD,
         'enableRateLimit': True,
     })
-    broker.set_sandbox_mode(True) # ¡CRÍTICO! Esto activa el dinero de prueba
+    broker.set_sandbox_mode(True) 
     print("✅ Conexión a OKX Demo ESTABLECIDA.")
 except Exception as e:
     print(f"❌ Error al conectar con OKX: {e}")
     broker = None
 
-# Configuramos los permisos de Discord
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
@@ -63,12 +62,12 @@ class BotonesTrading(View):
         super().__init__(timeout=None)
         self.ticker = ticker
         self.tipo_operacion = tipo_operacion
+        
         # 🛠️ CORRECCIÓN: Limpiamos las comas del texto antes de convertir a decimales
         self.precio = float(str(precio).replace(',', ''))
         self.tp = float(str(tp).replace(',', ''))
         self.sl = float(str(sl).replace(',', ''))
         
-        # Formatear el ticker para OKX (ej. de BTC-USD a BTC/USDT)
         ticker_limpio = self.ticker.replace("-", "")
         self.simbolo_broker = ticker_limpio.replace("USD", "/USDT")
         
@@ -92,22 +91,18 @@ class BotonesTrading(View):
             await interaction.response.send_message("❌ Error: API de OKX no configurada o caída.", ephemeral=True)
             return
 
-        # 'ephemeral=True' hace que solo tú veas la confirmación
         await interaction.response.defer(ephemeral=True) 
 
         try:
-            # 🧮 1. CÁLCULOS FINANCIEROS
             costo_usdt = float(LOTAJE_ACTUAL) * self.precio
             ganancia_usdt = abs(self.tp - self.precio) * float(LOTAJE_ACTUAL)
             riesgo_usdt = abs(self.precio - self.sl) * float(LOTAJE_ACTUAL)
 
-            # 🛡️ 2. PARÁMETROS DE PROTECCIÓN (TP/SL)
             parametros_extra = {
                 'takeProfit': {'triggerPrice': self.tp},
                 'stopLoss': {'triggerPrice': self.sl}
             }
 
-            # 🚀 3. ENVIAR LA ORDEN PROTEGIDA
             orden = broker.create_market_order(
                 symbol=self.simbolo_broker, 
                 side=side, 
@@ -115,7 +110,6 @@ class BotonesTrading(View):
                 params=parametros_extra
             )
             
-            # Intentar obtener el precio real de ejecución, sino usar el estimado
             precio_ejecutado = orden.get('average', orden.get('price', self.precio))
             if precio_ejecutado is None: precio_ejecutado = self.precio
 
@@ -168,11 +162,13 @@ async def on_message(message):
             description="Simulación forzada para probar el Brazo Robótico.",
             color=discord.Color.blue()
         )
+        vista = BotonesTrading("BTC-USD", "COMPRA", 60000.0, 62000.0, 59000.0) 
+        await message.channel.send(embed=embed, view=vista)
+        return
 
-        # 🎛️ COMANDO DIRECTO Y ESTRICTO: CONFIGURAR LOTE
+    # 🎛️ COMANDO DIRECTO Y ESTRICTO: CONFIGURAR LOTE
     if texto.lower().startswith("configurar lote"):
         try:
-            # Extrae el número de la frase (ej: "configurar lote 10" -> 10.0)
             partes = texto.split()
             nuevo_lote = float(partes[2])
             
@@ -184,10 +180,6 @@ async def on_message(message):
         except Exception as e:
             await message.channel.send("⚠️ **Formato incorrecto.** Por favor escribe el comando así: `configurar lote 10`")
             return
-        # Pasamos los 5 datos: Ticker, Tipo, Precio, TP, SL
-        vista = BotonesTrading("BTC-USD", "COMPRA", 60000.0, 62000.0, 59000.0) 
-        await message.channel.send(embed=embed, view=vista)
-        return
 
     # Si no es un comando de prueba, sigue el flujo normal
     msg_espera = await message.channel.send("⏳ **Analizando...**")
@@ -202,19 +194,9 @@ async def on_message(message):
         cat = data.get("categoria", "GENERAL") 
         if acc == "ANALIZAR" and not tick and not lst: acc = "RECOMENDAR"
 
-        # 🎛️ MEMORIA: CONFIGURAR LOTE
-        if acc == "CONFIGURAR_LOTE":
-            global LOTAJE_ACTUAL
-            nuevo_lote = data.get("valor")
-            LOTAJE_ACTUAL = nuevo_lote
-            await msg_espera.delete()
-            await message.channel.send(f"✅ **¡Entendido, socio!** \nHe actualizado mi memoria. A partir de ahora, ejecutaré las operaciones con **`{LOTAJE_ACTUAL}` lotes**.")
-            return
-
         # 1. COMPARAR
         if acc == "COMPARAR" and lst:
             await msg_espera.edit(content=f"⚖️ **Comparando...**")
-            # Logica de comparar
             await msg_espera.delete()
             await message.channel.send("Funcionalidad de comparar procesada.")
 
@@ -245,7 +227,6 @@ async def on_message(message):
                             embed.add_field(name="🎯 TP", value=f"`${info['tp']}`", inline=True)
                             embed.add_field(name="⛔ SL", value=f"`${info['sl']}`", inline=True)
                             
-                            # Pasamos los 5 datos dinámicos a los botones
                             vista = BotonesTrading(info['ticker'], tipo, info['precio'], info['tp'], info['sl'])
                             await message.channel.send(embed=embed, view=vista)
                     except: continue 
@@ -277,7 +258,6 @@ async def on_message(message):
                 await msg_espera.delete()
                 
                 if "NEUTRAL" not in tipo:
-                    # Pasamos los 5 datos dinámicos a los botones
                     vista = BotonesTrading(info['ticker'], tipo, info['precio'], info['tp'], info['sl'])
                     await message.channel.send(embed=embed, view=vista)
                 else:
@@ -291,7 +271,7 @@ async def on_message(message):
             await message.channel.send("👋 Hola. Prueba 'Oportunidades Cripto' o 'Analiza BTC'.")
 
     except Exception as e:
-        print(traceback.format_exc()) # Imprime el error detallado en la consola de Railway
+        print(traceback.format_exc()) 
         try: await msg_espera.delete() 
         except: pass
         await message.channel.send(f"⚠️ **Error Técnico:**\n`{str(e)}`")
@@ -318,7 +298,6 @@ async def cazador_automatico():
                     info, prob = await analizar_activo_completo(t, estilo, cat)
                     if info:
                         tipo = info.get('tipo_operacion', 'NEUTRAL')
-                        # 🔥 FILTRO BAJADO AL 40% PARA VER MÁS SEÑALES 🔥
                         if tipo == "NEUTRAL" or prob < 40: 
                             continue
 
@@ -337,7 +316,6 @@ async def cazador_automatico():
                         embed.add_field(name="📝 Análisis", value=f"_{info.get('motivo', '')}_", inline=False)
                         embed.set_footer(text="Cazador FX • Algoritmo de Trading")
 
-                        # Pasamos los 5 datos dinámicos a los botones
                         vista = BotonesTrading(info['ticker'], tipo, info['precio'], info['tp'], info['sl'])
                         try: await channel.send(embed=embed, view=vista)
                         except Exception as e: pass
