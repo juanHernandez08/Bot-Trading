@@ -32,22 +32,21 @@ CANALES_ALERTAS = {
 }
 
 # ==========================================================
-# 🔌 CONEXIÓN AL BROKER (BINANCE TESTNET)
+# 🔌 CONEXIÓN AL BROKER (BYBIT TESTNET)
 # ==========================================================
-BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
-BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 
 try:
-    broker = ccxt.binance({
-        'apiKey': BINANCE_API_KEY,
-        'secret': BINANCE_API_SECRET,
+    broker = ccxt.bybit({
+        'apiKey': BYBIT_API_KEY,
+        'secret': BYBIT_API_SECRET,
         'enableRateLimit': True,
-        'options': {'defaultType': 'spot'} # Aseguramos que opere en el mercado Spot
     })
     broker.set_sandbox_mode(True) # ¡CRÍTICO! Esto activa el dinero de prueba
-    print("✅ Conexión a Binance Testnet ESTABLECIDA.")
+    print("✅ Conexión a Bybit Testnet ESTABLECIDA.")
 except Exception as e:
-    print(f"❌ Error al conectar con Binance: {e}")
+    print(f"❌ Error al conectar con Bybit: {e}")
     broker = None
 
 # Configuramos los permisos de Discord
