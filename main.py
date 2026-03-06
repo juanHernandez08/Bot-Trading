@@ -20,7 +20,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 # ==========================================================
-# 🧠 MEMORIA DEL BOT
+# 🧠 MEMORIA DEL BOT 
 # ==========================================================
 LOTAJE_ACTUAL = 0.01
 rondas_vacias = {"FOREX": 0, "CRIPTO": 0, "ACCIONES": 0}
